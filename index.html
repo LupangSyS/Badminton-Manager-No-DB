@@ -24,7 +24,7 @@
         <div class="landing-hero">
             <div class="hero-icon">🏸</div>
             <h1>Badminton Manager <span class="pro-accent">PRO</span></h1>
-            <p>ระบบจัดการคิว สุ่มจัดคู่ และสถิติก๊วนแบดมินตันแบบครบวงจร</p>
+            <p>ระบบจัดการคิว จับคู่ผู้เล่น และสถิติสำหรับกลุ่มแบดมินตัน</p>
 
             <div class="landing-card">
                 <button onclick="createRoom()" class="pill-btn pill-dark" style="color:white; border:none; cursor:pointer;">
@@ -32,31 +32,27 @@
                 </button>
 
                 <div class="room-code-row" style="margin-top: 14px;">
-                    <input type="text" id="room-code-input" placeholder="รหัสห้อง เช่น 0809-X805">
-                    <button onclick="pasteRoomCode()" class="paste-btn" style="border:none; cursor:pointer;" title="วางรหัสห้องจากคลิปบอร์ด">📋 วาง</button>
+                    <input type="text" id="room-code-input" placeholder="รหัสห้องเดิม เช่น 0809-X805">
                 </div>
 
                 <div class="pill-row" style="margin-top: 10px;">
                     <button onclick="joinRoomAdmin()" class="pill-btn pill-amber" style="color:white; border:none; cursor:pointer;">
-                        🛠️ 2. เข้าห้อง (แอดมิน)
-                    </button>
-                    <button onclick="joinRoom()" class="pill-btn pill-blue" style="color:white; border:none; cursor:pointer;">
-                        📱 3. เข้าห้อง (ดูคิว)
+                        🛠️ 2. เปิดห้องเดิมต่อ
                     </button>
                 </div>
 
-                <div class="landing-divider">ฟีเจอร์เพิ่มเติม</div>
+                <div class="landing-divider">ฟังก์ชันเพิ่มเติม</div>
 
                 <button onclick="window.location.href='database.html'" class="pill-btn pill-green" style="color:white; border:none; cursor:pointer; margin-bottom: 10px;">
-                    🌐 4. Hall of Fame (เพิ่ม/ลบคน)
+                    🌐 3. Hall of Fame (จัดการผู้เล่น)
                 </button>
 
                 <button onclick="window.location.href='history.html'" class="pill-btn pill-purple" style="color:white; border:none; cursor:pointer; margin-bottom: 10px;">
-                    📊 5. ประวัติ & สถิติ
+                    📊 4. ประวัติและสถิติ
                 </button>
 
                 <button onclick="window.location.href='billing.html'" class="pill-btn pill-rose" style="color:white; border:none; cursor:pointer; margin-bottom: 10px;">
-                    🧮 6. หารเงิน (คิดค่าคอร์ท/ลูก)
+                    🧮 5. คำนวณค่าใช้จ่าย (ค่าคอร์ทและลูกแบด)
                 </button>
 
                 <div class="landing-divider">สำรองข้อมูล</div>
@@ -70,7 +66,7 @@
                 </button>
             </div>
 
-            <p class="landing-hint">กด "1. สร้างห้องใหม่ (Host)" เพื่อสร้างห้องใหม่ แล้วส่งรหัสห้องให้เพื่อนเข้ามาต่อคิวได้เลย</p>
+            <p class="landing-hint">กด "1. สร้างห้องใหม่ (Host)" เพื่อเริ่มต้นใช้งาน หากต้องการกลับมาจัดการห้องเดิม ให้กรอกรหัสห้องแล้วกด "2. เปิดห้องเดิมต่อ" (ใช้ได้เฉพาะในเบราว์เซอร์เครื่องนี้)</p>
         </div>
     </div>
 
@@ -78,18 +74,18 @@
     <div id="app-container" style="display: none;">
         <div id="room-header" class="app-header">
             <div>
-                🏠 รหัสห้อง: <span id="display-room-id" style="color: #fbbf24; font-weight: 800; font-family: monospace;">ยังไม่ได้เข้าห้อง</span>
+                🏠 รหัสห้อง: <span id="display-room-id" style="color: #fbbf24; font-weight: 800; font-family: monospace;">ยังไม่ได้เปิดห้อง</span>
                 <span id="display-role" style="font-size: 0.8rem; background: #FF6F91; padding: 4px 10px; border-radius: 999px; margin-left: 10px;"></span>
             </div>
             <div class="header-stats">
-                <span id="header-court-status">0 กำลังแข่ง / 0 คอร์ททั้งหมด</span>
+                <span id="header-court-status">0 กำลังแข่งขัน / 0 คอร์ททั้งหมด</span>
                 <div class="header-divider"></div>
-                <span>คิวรอ: <span id="header-queue-count">0 คน</span></span>
+                <span>ผู้เล่นรอคิว: <span id="header-queue-count">0 คน</span></span>
                 <div class="header-divider"></div>
-                <span>แข่งเสร็จแล้ว: <span id="header-completed-count">0 แมตช์</span></span>
+                <span>แข่งจบแล้ว: <span id="header-completed-count">0 แมตช์</span></span>
                 <div class="header-divider"></div>
-                <button class="header-danger-btn" onclick="resetStatsOnly()" title="รีเซ็ตสถิติ (ต้องใส่รหัสผ่าน)">รีเซ็ต</button>
-                <button class="header-danger-btn header-danger-btn-strong" onclick="resetAll()" title="ล้างข้อมูลทั้งหมด (ต้องใส่รหัสผ่าน)">ล้าง</button>
+                <button class="header-danger-btn" onclick="resetStatsOnly()" title="รีเซ็ตสถิติ (ต้องใส่รหัสผ่าน)">รีเซ็ตสถิติ</button>
+                <button class="header-danger-btn header-danger-btn-strong" onclick="resetAll()" title="ล้างข้อมูลทั้งหมด (ต้องใส่รหัสผ่าน)">ล้างข้อมูล</button>
             </div>
         </div>
 
@@ -97,11 +93,11 @@
             <div id="courts-container" class="courts-area-grid"></div>
             <div id="next-match-panel" style="background: linear-gradient(135deg, #5B8DEF 0%, #7EC8F0 100%); color: white; padding: 15px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
                 <h4 style="margin-top: 0; display: flex; align-items: center; gap: 10px; color: #ffffff !important; margin-bottom: 10px;">
-                    📢 เตรียมตัวลงสนาม (Next Match)
+                    📢 แมตช์ถัดไป (Next Match)
                     <span style="font-size: 0.8em; font-weight: normal; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 20px;">Auto Preview</span>
                 </h4>
                 <div id="next-match-list" style="display: flex; gap: 10px; overflow-x: auto; padding-bottom: 5px; justify-content: flex-start;">
-                    <div style="text-align:center; color: #ddd; font-style: italic;">... กำลังคำนวณ ...</div>
+                    <div style="text-align:center; color: #ddd; font-style: italic;">กำลังคำนวณ...</div>
                 </div>
             </div>
 
@@ -128,20 +124,20 @@
                             <label for="mmr-mode-toggle" style="cursor: pointer; font-weight: bold; color: #4FB3F0;">⚖️ MMR Mode</label>
                         </div>
                         <div class="control-panel">
-                            <textarea id="new-players" placeholder="วางชื่อ... (1.แปง, 2.เวฟ)"></textarea>
+                            <textarea id="new-players" placeholder="วางรายชื่อผู้เล่น เช่น 1. แปง, 2. เวฟ"></textarea>
                             <button class="primary" style="width:100%; margin-top:5px; background:#B980E8;" onclick="openDbSelector()">
-                                📖 เลือกคนจาก Database
+                                📖 เลือกผู้เล่นจาก Database
                             </button>
                             <div style="display:flex; gap:8px; margin-top:8px;">
                                 <button class="success" style="flex:1;" onclick="addPlayers()">+ เพิ่ม</button>
-                                <button class="secondary" onclick="openBookingModal('pair')">คู่</button>
+                                <button class="secondary" onclick="openBookingModal('pair')">จองคู่</button>
                                 <button class="secondary" onclick="openBookingModal('match')">4</button>
                             </div>
                         </div>
                     </div>
 
                     <div class="sidebar-queue-wrapper">
-                        <h4 style="margin: 10px 0;">รอ (<span id="queue-count">0</span>)</h4>
+                        <h4 style="margin: 10px 0;">รอคิว (<span id="queue-count">0</span>)</h4>
                         <div style="flex:1; max-height:300px; overflow-y:auto; padding-right:2px;">
                             <ul id="player-queue" class="player-list"></ul>
                         </div>
@@ -157,9 +153,9 @@
                             <option value="total">🌍 รวมทั้งหมด</option>
                         </select>
                         <select id="sort-select" onchange="updateDashboard()" style="padding:5px; border-radius:6px;">
-                            <option value="games_desc">เล่นเยอะสุด (Games ⬇)</option>
-                            <option value="games_asc">เล่นน้อยสุด (Games ⬆)</option>
-                            <option value="wins_desc">ชนะเยอะสุด (Wins ⬇)</option>
+                            <option value="games_desc">เล่นมากที่สุด (Games ⬇)</option>
+                            <option value="games_asc">เล่นน้อยที่สุด (Games ⬆)</option>
+                            <option value="wins_desc">ชนะมากที่สุด (Wins ⬇)</option>
                         </select>
                     </div>
                 </div>
@@ -168,7 +164,7 @@
                         <thead>
                             <tr>
                                 <th width="8%">#</th>
-                                <th>ชื่อ</th>
+                                <th>ชื่อผู้เล่น</th>
                                 <th width="10%">ระดับ</th>
                                 <th width="9%" style="color:#4FB3F0;">MMR</th>
                                 <th width="8%">P</th>
@@ -186,7 +182,7 @@
                 <h3>📜 ประวัติล่าสุด</h3>
                 <div style="max-height: 250px; overflow-y:auto; border-radius:8px;">
                     <table class="stats-table">
-                        <thead><tr><th width="12%">เวลา</th><th width="8%">ที่</th><th>ทีมชนะ (Win) 🏆</th><th>ทีมแพ้ (Lose)</th><th width="10%">คะแนน</th><th width="10%">เวลา</th></tr></thead>
+                        <thead><tr><th width="12%">เวลา</th><th width="8%">คอร์ท</th><th>ทีมชนะ (Win) 🏆</th><th>ทีมแพ้ (Lose)</th><th width="10%">คะแนน</th><th width="10%">ระยะเวลา</th></tr></thead>
                         <tbody id="match-log-body"><tr><td colspan="6" style="color:gray;">-</td></tr></tbody>
                     </table>
                 </div>
@@ -199,24 +195,24 @@
 
         <div id="overview-view" class="hidden">
             <div class="pastel-panel panel-white" id="summary-capture-area">
-                <div class="overview-banner">📋 สรุปผลการตีแบดมินตัน (Session Overview)</div>
+                <div class="overview-banner">📋 สรุปผลการแข่งขัน (Session Overview)</div>
 
                 <div class="kpi-row">
                     <div class="kpi-tile"><div class="kpi-label">แมตช์ที่แข่งเสร็จ</div><div class="kpi-value" id="kpi-total-matches">0</div></div>
                     <div class="kpi-tile"><div class="kpi-label">เวลาคอร์ทรวม</div><div class="kpi-value" id="kpi-total-time">0 นาที</div></div>
-                    <div class="kpi-tile"><div class="kpi-label">ผู้เล่นในก๊วน</div><div class="kpi-value kpi-blue" id="kpi-total-players">0 คน</div></div>
-                    <div class="kpi-tile"><div class="kpi-label">แต้มทั้งหมดที่ทำได้</div><div class="kpi-value kpi-amber" id="kpi-total-points">0</div></div>
+                    <div class="kpi-tile"><div class="kpi-label">ผู้เล่นทั้งหมด</div><div class="kpi-value kpi-blue" id="kpi-total-players">0 คน</div></div>
+                    <div class="kpi-tile"><div class="kpi-label">คะแนนรวมทั้งหมด</div><div class="kpi-value kpi-amber" id="kpi-total-points">0</div></div>
                 </div>
 
                 <div class="award-row">
-                    <div class="award-card award-amber"><div class="award-title">👑 MVP วันนี้</div><div class="award-value" id="award-mvp">-</div><div class="award-sub">ชนะมากที่สุด และ Win Rate สูงสุด</div></div>
-                    <div class="award-card award-green"><div class="award-title">🐎 ม้าศึก (Ironman)</div><div class="award-value" id="award-ironman">-</div><div class="award-sub">ลงเล่นเกมมากที่สุดในก๊วน</div></div>
-                    <div class="award-card award-blue"><div class="award-title">🤝 คู่หูทองคำ (Best Duo)</div><div class="award-value" id="award-duo">-</div><div class="award-sub">คู่ที่ลงเล่นร่วมกันแล้วชนะเยอะที่สุด</div></div>
-                    <div class="award-card award-rose"><div class="award-title">🔥 แมตช์เดือดแห่งวัน</div><div class="award-value" id="award-closest">-</div><div class="award-sub">แมตช์คะแนนสูสีและดุเดือดที่สุด</div></div>
+                    <div class="award-card award-amber"><div class="award-title">👑 ผู้เล่นยอดเยี่ยมประจำวัน (MVP)</div><div class="award-value" id="award-mvp">-</div><div class="award-sub">ชนะมากที่สุดและมีอัตราชนะสูงสุด</div></div>
+                    <div class="award-card award-green"><div class="award-title">🐎 ผู้เล่นที่ลงสนามมากที่สุด (Ironman)</div><div class="award-value" id="award-ironman">-</div><div class="award-sub">จำนวนเกมที่ลงเล่นมากที่สุด</div></div>
+                    <div class="award-card award-blue"><div class="award-title">🤝 คู่ผู้เล่นยอดเยี่ยม (Best Duo)</div><div class="award-value" id="award-duo">-</div><div class="award-sub">คู่ที่ชนะร่วมกันมากที่สุด</div></div>
+                    <div class="award-card award-rose"><div class="award-title">🔥 แมตช์สูสีที่สุดของวัน</div><div class="award-value" id="award-closest">-</div><div class="award-sub">แมตช์ที่คะแนนต่างกันน้อยที่สุด</div></div>
                 </div>
 
                 <div style="margin-top:20px;">
-                    <h4>📋 รายชื่อ & สถิติ (Player Performance)</h4>
+                    <h4>📋 รายชื่อและสถิติผู้เล่น (Player Performance)</h4>
                     <table class="stats-table">
                         <thead><tr><th>ชื่อ</th><th>Check-in</th><th>เล่น (Games)</th><th>ชนะ (Wins)</th><th>แพ้ (Loss)</th><th>Win %</th><th>ฟอร์ม 5 นัดหลัง</th></tr></thead>
                         <tbody id="overview-stats-body"></tbody>
@@ -224,7 +220,7 @@
                 </div>
 
                 <div style="margin-top:20px;">
-                    <h4 style="color:#FFB65C;">⚠️ เช็คคู่ซ้ำ (ที่เคยเกิดขึ้น)</h4>
+                    <h4 style="color:#FFB65C;">⚠️ การจับคู่ซ้ำที่เกิดขึ้น</h4>
                     <table class="stats-table">
                         <thead><tr><th>คู่ที่เจอกัน</th><th>ประเภท</th><th>จำนวนครั้ง</th></tr></thead>
                         <tbody id="overview-repeat-body"><tr><td colspan="3">ไม่มีข้อมูล</td></tr></tbody>
@@ -233,7 +229,7 @@
             </div>
             <div class="nav-bar" style="gap:10px;">
                 <button class="secondary" onclick="toggleView('main')">↩ กลับหน้าสนาม</button>
-                <button class="success" onclick="endSession()">💾 จบการตีวันนี้ (Save Image)</button>
+                <button class="success" onclick="endSession()">💾 จบการแข่งขันวันนี้ (บันทึกเป็นรูปภาพ)</button>
                 <a href="database.html" target="_blank" style="text-decoration:none;">
                     <button class="warning" style="background:#FFB65C; color:white; border:none; padding:8px 14px; border-radius:8px; font-weight:bold; cursor:pointer;">
                         🌐 Hall of Fame (Database)
@@ -241,15 +237,15 @@
                 </a>
                 <a href="history.html" target="_blank" style="text-decoration:none;">
                     <button class="primary" style="background:#4FB3F0; color:white; border:none; padding:8px 14px; border-radius:8px; font-weight:bold; cursor:pointer;">
-                        📈 ดูประวัติ
+                        📈 ดูประวัติย้อนหลัง
                     </button>
                 </a>
                 <button style="background:#4FCB8D; color:white; border:none; padding:8px 14px; border-radius:8px; font-weight:bold; cursor:pointer;" onclick="copyLineGroupReport()">
-                    💬 คัดลอกสรุปส่ง LINE ก๊วน
+                    💬 คัดลอกสรุปเพื่อส่งทาง LINE
                 </button>
                 <a href="billing.html" target="_blank" style="text-decoration:none;">
                     <button style="background:#FF6F91; color:white; border:none; padding:8px 14px; border-radius:8px; font-weight:bold; cursor:pointer;">
-                        🧮 หารเงิน
+                        🧮 คำนวณค่าใช้จ่าย
                     </button>
                 </a>
             </div>
@@ -257,7 +253,7 @@
 
         <div id="booking-modal" class="modal">
             <div class="modal-content">
-                <h3 style="margin-top:0;">จองคิว</h3>
+                <h3 style="margin-top:0;">จองคิวล่วงหน้า</h3>
                 <div id="booking-inputs" style="max-height: 200px; overflow-y: auto; margin: 15px 0;"></div>
                 <div class="modal-actions">
                     <button class="secondary" onclick="closeModal('booking-modal')">ยกเลิก</button>
@@ -288,7 +284,7 @@
                             </div>
                             <button class="score-step" onclick="stepScore(0,1)">+</button>
                         </div>
-                        <div class="score-hint" id="score-hint-0">👆 เลื่อนใส่คะแนน</div>
+                        <div class="score-hint" id="score-hint-0">👆 เลื่อนเพื่อกำหนดคะแนน</div>
                         <button id="finish-winner-btn-0" class="finish-winner-btn" onclick="setMatchWinner(0)">🏆 ทีม A ชนะ</button>
                     </div>
                     <div class="finish-team-card team-b">
@@ -309,7 +305,7 @@
 
                 <div class="modal-actions" style="flex-direction:column; gap:8px; margin-top:16px;">
                     <button class="success" style="width:100%; padding:12px;" onclick="submitMatchResult()">💾 บันทึกผล &amp; อัปเดต MMR</button>
-                    <button class="secondary" style="width:100%;" onclick="cancelStopGame()">↩ ยกเลิก (กดผิด)</button>
+                    <button class="secondary" style="width:100%;" onclick="cancelStopGame()">↩ ยกเลิก (กลับไปแก้ไข)</button>
                 </div>
             </div>
         </div>
@@ -326,7 +322,7 @@
         <div class="db-modal-content">
             <h3 style="margin-top:0; color:#2c3e50;">📖 เลือกจาก Database</h3>
             <div style="display:flex; gap:8px; margin-bottom:10px;">
-                <input type="text" id="dbSearch" placeholder="🔍 ค้นหาชื่อ..." onkeyup="filterDbPlayers()" style="flex:1; padding:10px; box-sizing:border-box; border-radius:8px; border:1px solid #ccc;">
+                <input type="text" id="dbSearch" placeholder="🔍 ค้นหาชื่อผู้เล่น..." onkeyup="filterDbPlayers()" style="flex:1; padding:10px; box-sizing:border-box; border-radius:8px; border:1px solid #ccc;">
                 <select id="dbSortSelect" onchange="filterDbPlayers()" style="padding:10px; border-radius:8px; border:1px solid #ccc; background:white;">
                     <option value="mmr">⚔️ MMR</option>
                     <option value="name">🔤 A-Z / ก-ฮ</option>
@@ -337,7 +333,7 @@
                 <span id="dbSelectedCount" style="font-size:0.85em; color:#64748b;">เลือกไว้ 0 คน</span>
                 <div style="display:flex; gap:8px;">
                     <button class="secondary" onclick="closeDbSelector()">↩ ปิด</button>
-                    <button class="success" id="dbAddSelectedBtn" onclick="addSelectedFromDb()" disabled>✅ เพิ่มที่เลือก</button>
+                    <button class="success" id="dbAddSelectedBtn" onclick="addSelectedFromDb()" disabled>✅ เพิ่มผู้เล่นที่เลือก</button>
                 </div>
             </div>
         </div>
@@ -346,7 +342,7 @@
     <div id="image-modal" class="modal" style="z-index: 2000;" onclick="closeBigImage()">
         <div class="modal-content" style="text-align: center; background: transparent; box-shadow: none; padding: 0;" onclick="event.stopPropagation()">
             <div style="background: white; padding: 15px; border-radius: 16px; display: inline-block; max-width: 90vw;">
-                <h3 id="big-image-name" style="margin: 0 0 10px 0; color: #2c3e50;">ชื่อ</h3>
+                <h3 id="big-image-name" style="margin: 0 0 10px 0; color: #2c3e50;">ชื่อผู้เล่น</h3>
                 <img id="big-image-view" src="" style="max-width: 100%; max-height: 60vh; border-radius: 8px; object-fit: contain; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
                 <button class="secondary" style="margin-top: 15px; width: 100%;" onclick="closeBigImage()">❌ ปิดรูป</button>
             </div>
