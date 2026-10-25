@@ -75,6 +75,50 @@
         })
     };
 
+    // 🛡️ Backup & protection --------------------------------------------
+    // Ask the browser not to clear our data automatically when space is low.
+    // (A manual "Clear site data" still erases it — use the backup file for that.)
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+
+    const BACKUP_KEYS = k => k.indexOf(PREFIX) === 0 || k === 'BADMINTON_MANAGER_V7_DATA';
+
+    window.exportAllData = function () {
+        const dump = {};
+        Object.keys(localStorage).filter(BACKUP_KEYS).forEach(k => { dump[k] = localStorage.getItem(k); });
+        const blob = new Blob([JSON.stringify({ app: 'badminton-manager', version: 1, data: dump })], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'badminton-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    };
+
+    window.importAllData = function () {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/json,.json';
+        input.onchange = e => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                try {
+                    const parsed = JSON.parse(reader.result);
+                    if (parsed.app !== 'badminton-manager' || !parsed.data) throw new Error('bad file');
+                    if (!confirm('การนำเข้าจะแทนที่ข้อมูลทั้งหมดในเบราว์เซอร์นี้ ต้องการดำเนินการต่อหรือไม่?')) return;
+                    Object.keys(localStorage).filter(BACKUP_KEYS).forEach(k => localStorage.removeItem(k));
+                    Object.keys(parsed.data).filter(BACKUP_KEYS).forEach(k => localStorage.setItem(k, parsed.data[k]));
+                    alert('นำเข้าข้อมูลเรียบร้อยแล้ว');
+                    location.reload();
+                } catch (err) {
+                    alert('ไม่สามารถนำเข้าได้ กรุณาเลือกไฟล์สำรองข้อมูลที่ถูกต้อง');
+                }
+            };
+            reader.readAsText(file);
+        };
+        input.click();
+    };
+
     // 📸 Photos: shrunk to a small picture and saved inside the browser
     window.storage = {
         ref: path => {
