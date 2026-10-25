@@ -104,7 +104,7 @@
         <div class="brand"><span class="brand-icon">🏆</span> Hall of Fame</div>
         <a href="index.html">🏠 หน้าแรก</a>
     </div>
-    <p class="subtitle">ฐานข้อมูลผู้เล่นทั้งหมด (แก้ไขข้อมูล/อัปโหลดรูปตรงขึ้น Firebase)</p>
+    <p class="subtitle">ฐานข้อมูลผู้เล่นทั้งหมด (แก้ไขข้อมูล/เก็บในเบราว์เซอร์นี้)</p>
 
     <div class="sort-bar">
         <label for="sort-select">🔽 เรียงตาม:</label>
@@ -151,9 +151,7 @@
         </div>
     </div>
 
-    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-storage-compat.js"></script>
+    <script src="local-db.js"></script>
 
     <script>
         // 🛡️ ป้องกัน XSS ตอนแทรกชื่อผู้เล่นลงหน้าเว็บ
@@ -164,26 +162,10 @@
             }[tag] || tag));
         }
 
-        // Note: this apiKey is safe to be public — Firebase web config is designed
-        // to be client-visible. Real access control lives in Firestore/Storage
-        // Security Rules (configured in the Firebase Console, not in this file).
-        const firebaseConfig = {
-            apiKey: "AIzaSyCnrkEbVOM3i7f59rAnWN9mgPC9iekEuIA",
-            authDomain: "badminton-manager-e77bb.firebaseapp.com",
-            projectId: "badminton-manager-e77bb",
-            storageBucket: "badminton-manager-e77bb.firebasestorage.app",
-            messagingSenderId: "402072472322",
-            appId: "1:402072472322:web:a212ed6eaff7ec10fbd01b",
-            measurementId: "G-2EFE485QTK"
-        };
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.firestore();
-        const storage = firebase.storage();
-
         const LEVEL_COLORS = { 'BG': '#4FCB8D', 'N': '#4FB3F0', 'S': '#FFB65C', 'P': '#B980E8' };
 
         // Cache of the currently-loaded profiles, keyed by encoded name, so the
-        // edit modal can be pre-filled without a separate Firestore read.
+        // edit modal can be pre-filled without a separate read.
         let playersCache = {};
         let allPlayersRaw = []; // unsorted snapshot data — re-sorted on demand, no refetch needed
 
@@ -282,7 +264,7 @@
 
             try {
                 if (newName !== original.name) {
-                    // The player's name is literally their document ID in Firestore,
+                    // The player's name is literally their document ID in the local database,
                     // so renaming means writing a new doc and removing the old one —
                     // everything else (stats, MMR, avatar) moves over untouched.
                     if (confirm(`เปลี่ยนชื่อจาก "${original.name}" เป็น "${newName}"? สถิติทั้งหมดจะย้ายไปกับชื่อใหม่`)) {
@@ -306,7 +288,7 @@
         // Note: the password check below runs in the browser, so it's only a
         // speed bump against an accidental tap — anyone who opens dev tools
         // can read it in plain text. It's not real access control (same as
-        // this file's Firestore rules note above) — fine for a small trusted
+        // this file's note above) — fine for a small trusted
         // group, but don't rely on it to stop someone determined.
         // ----------------------------------------------------
         async function deleteProfile(encName) {
@@ -328,18 +310,8 @@
         }
 
         // ----------------------------------------------------
-        // 📸 ระบบอัปโหลดภาพ — ผ่าน Firebase Storage
-        // ✅ FIX: this used to POST straight to ImgBB with a hardcoded API key
-        // sitting in plain text in this file (visible to anyone via "view
-        // source"). Firebase Storage was already loaded but unused — now the
-        // upload goes through it instead, so there's no third-party key exposed
-        // in the client at all. Access is governed by your Firebase Storage
-        // Security Rules in the console (same place as your Firestore rules).
-        // If uploads fail with a permission error, check that Storage Rules
-        // allow writes — Firebase's default rules require a signed-in user,
-        // and this app doesn't use Firebase Auth, so you may need a rule like:
-        //   allow read, write: if true;
-        // (fine for a small trusted-group tool; tighten later if needed).
+        // 📸 ระบบอัปโหลดภาพ — เก็บในเบราว์เซอร์ (ย่อรูปอัตโนมัติ)
+        // Photos are shrunk to 256px and saved inside this browser (see local-db.js).
         // ----------------------------------------------------
         function triggerUpload(encodedName) {
             const playerName = decodeURIComponent(encodedName);
@@ -365,7 +337,7 @@
                     });
                     console.log(`✅ อัปเดตรูป ${playerName} สำเร็จ!`);
                 } catch (err) {
-                    alert("❌ อัปโหลดรูปไม่ผ่านว่ะ! เช็คเน็ต หรือ Storage Rules ใน Firebase Console");
+                    alert("❌ อัปโหลดรูปไม่ผ่านว่ะ! พื้นที่เก็บข้อมูลอาจเต็ม ลองรูปที่เล็กลง");
                     console.error(err);
                 } finally {
                     if(btn) { btn.innerText = "📸 รูป"; btn.classList.remove('loading'); }

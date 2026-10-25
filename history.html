@@ -58,8 +58,7 @@
         </div>
     </div>
 
-    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
+    <script src="local-db.js"></script>
 
     <script>
         // 🛡️ ป้องกัน XSS ตอนแทรกชื่อผู้เล่นลงหน้าเว็บ
@@ -70,18 +69,6 @@
             }[tag] || tag));
         }
 
-        // Note: this apiKey is safe to be public — see the note in firebase-sync.js.
-        const firebaseConfig = {
-            apiKey: "AIzaSyCnrkEbVOM3i7f59rAnWN9mgPC9iekEuIA",
-            authDomain: "badminton-manager-e77bb.firebaseapp.com",
-            projectId: "badminton-manager-e77bb",
-            storageBucket: "badminton-manager-e77bb.firebasestorage.app",
-            messagingSenderId: "402072472322",
-            appId: "1:402072472322:web:a212ed6eaff7ec10fbd01b",
-            measurementId: "G-2EFE485QTK"
-        };
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.firestore();
 
         let allMatches = [];
         let groupedMatches = {}; // เก็บแยกเป็นรายห้อง (roomId) ไม่ใช่แค่รายวัน — กันข้อมูลชนกันตอนแชร์เว็บให้เพื่อนสร้างห้องคนละห้องวันเดียวกัน
@@ -608,7 +595,7 @@
         // ==========================================
         // 🗑 ลบ Log ของห้องนี้ทั้งหมด (เช่น ห้องทดสอบ) — ต้องยืนยัน + รหัสผ่านแอดมิน
         // นี่เป็นแค่ด่านกันมือลั่นในหน้าเว็บ ไม่ใช่ระบบความปลอดภัยจริง
-        // (ของจริงต้องตั้งที่ Firestore Security Rules)
+        // (ของจริงต้องทำได้แค่ในเบราว์เซอร์นี้)
         // ==========================================
         async function deleteRoomLog(roomId) {
             const meta = roomMeta[roomId] || {};
@@ -767,10 +754,10 @@
         fetchData();
 
         // ==========================================
-        // 💰 ฟังก์ชันเซฟบิลสรุปยอดลง Firebase
+        // 💰 ฟังก์ชันเซฟบิลสรุปยอด
         // (ยังไม่ได้เรียกใช้งานที่ไหนในระบบตอนนี้ — เก็บไว้เผื่ออนาคต ตามที่ตกลงกันไว้)
         // ==========================================
-        async function saveBillToFirebase(roomId, billData) {
+        async function saveBillToLocal(roomId, billData) {
             if (!roomId || !billData) {
                 console.error("ข้อมูลไม่ครบว่ะ เซฟไม่ได้!");
                 alert("⚠️ ข้อมูลหายไปไหนไม่รู้ เช็คระบบก่อนเซฟดิ๊!");

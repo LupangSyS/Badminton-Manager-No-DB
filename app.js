@@ -19,14 +19,14 @@ const STORAGE_KEY = 'BADMINTON_MANAGER_V7_DATA';
 // ==========================================
 // 🚪 ระบบ Lobby
 // ==========================================
-// ✅ FIX: these used to be declared a SECOND time in firebase-sync.js. Since
+// ✅ FIX: these used to be declared a SECOND time in local-sync.js. Since
 // app.js loads last, its versions silently won — but they called a function
 // (startRealtimeSync) that never existed anywhere, so real-time sync never
 // actually started. This is now the one and only version, and it correctly
-// calls syncFromFirebase(). Also: only HOST/ADMIN browsers call init() —
+// calls syncFromLocal(). Also: only HOST/ADMIN browsers call init() —
 // that's what starts the auto-fill/auto-start timers. Spectator browsers
 // must never run those, or every open viewer tab ends up independently
-// writing to the shared Firebase document at the same time as the host.
+// writing to the shared room data at the same time as the host.
 
 function generateRoomCode() {
     const d = new Date();
@@ -55,7 +55,7 @@ function createRoom() {
     // in localStorage last time (e.g. the admin forgot to click "จบการตีแบด"),
     // including stale gameStartTime values that show as impossible play times
     // like "200 minutes" — and then immediately push that stale data into
-    // this new room's Firebase document.
+    // this new room's data.
     localStorage.removeItem(STORAGE_KEY);
 
     sessionStorage.setItem('ROOM_ID', currentRoomId);
@@ -75,7 +75,7 @@ function createRoom() {
     }
 
     init(); // host only: starts local auto-fill / timer intervals
-    if (typeof syncFromFirebase === 'function') syncFromFirebase();
+    if (typeof syncFromLocal === 'function') syncFromLocal();
     if (typeof triggerSave === 'function') triggerSave(); // push initial state so joiners have something to read
 
     alert(`✅ สร้างห้องสำเร็จ! รหัสห้องคือ: ${currentRoomId}`);
@@ -104,7 +104,7 @@ function joinRoom() {
     const controlPanel = document.querySelector('.control-sidebar-container');
     if (controlPanel) controlPanel.style.display = 'none';
 
-    if (typeof syncFromFirebase === 'function') syncFromFirebase();
+    if (typeof syncFromLocal === 'function') syncFromLocal();
 }
 
 // 🛠️ 3. เข้าห้องแอดมิน (คุมคิวผ่านมือถือ)
@@ -117,7 +117,7 @@ function joinRoomAdmin() {
     isHost = true;
 
     // Don't let another room's cached state flash on screen while we wait
-    // for the real data to arrive from Firebase (see createRoom() for why).
+    // for the real data to arrive from storage (see createRoom() for why).
     localStorage.removeItem(STORAGE_KEY);
 
     sessionStorage.setItem('ROOM_ID', currentRoomId);
@@ -134,7 +134,7 @@ function joinRoomAdmin() {
     if (controlPanel) controlPanel.style.display = 'block';
 
     init(); // admin controls the queue too, so local intervals are needed
-    if (typeof syncFromFirebase === 'function') syncFromFirebase();
+    if (typeof syncFromLocal === 'function') syncFromLocal();
 }
 
 
@@ -365,7 +365,7 @@ async function addPlayers() {
                     console.log(`🆕 สร้างโปรไฟล์ใหม่ให้ ${cleanName} ลง Cloud`);
                 }
             } catch (err) {
-                console.error("Firebase Profile Error:", err);
+                console.error("Profile Error:", err);
             }
         }
         players.push(profile);
@@ -464,7 +464,7 @@ function resetCourtsState() {
 // Stops every court WITHOUT recording a finished game — used when ending the
 // session for the day, since a court still "playing" (or stuck at the
 // "who won?" popup) hasn't actually finished and shouldn't count as a scored
-// match, get MMR changes, or be left marked "playing" in Firebase forever.
+// match, get MMR changes, or be left marked "playing" forever.
 function stopAllCourtsWithoutScoring() {
     // If the "who won?" popup is open, stopGame() already added this game to
     // everyone's count in anticipation of picking a winner — undo that first,
@@ -1800,7 +1800,7 @@ function savePlayerProfileToCloud(player) {
 // end of this file, which ran for EVERY visitor (host, admin, AND spectator)
 // immediately on page load — before any role was even chosen. That meant every
 // spectator's browser was independently running the auto-fill/auto-start timers
-// and pushing writes to Firebase, racing against the host. Now init() only runs
+// and pushing writes, racing against the host. Now init() only runs
 // from createRoom()/joinRoomAdmin() (above) and here, for a HOST resuming a
 // session after a page refresh. Spectators never call init().
 window.onload = function() {
@@ -1823,7 +1823,7 @@ window.onload = function() {
             document.getElementById('display-role').innerText = "📱 VIEWER (ดูอย่างเดียว)";
             document.getElementById('display-role').style.background = "#7f8c8d";
         }
-        if (typeof syncFromFirebase === 'function') syncFromFirebase();
+        if (typeof syncFromLocal === 'function') syncFromLocal();
         console.log("🔄 กู้ชีพสำเร็จ! กลับเข้าห้อง:", currentRoomId, "สถานะ Host:", isHost);
     }
     // No savedRoomId: still on the landing page. init() will run once the
@@ -1914,7 +1914,7 @@ function filterDbPlayers() {
 }
 
 // Adds everyone ticked in one go — reuses addPlayers()'s existing per-name
-// Firestore-profile lookup logic by feeding it all the selected names at once.
+// profile lookup logic by feeding it all the selected names at once.
 async function addSelectedFromDb() {
     if (dbSelectedNames.size === 0) return;
     const names = [...dbSelectedNames].filter(name => !players.some(p => p.name === name && p.status !== 'left'));

@@ -1,20 +1,4 @@
-// 👇 วาง Config ทิ้งไว้บนสุดเลย
-// Note: this apiKey is safe to be public — Firebase web config is designed to be
-// client-visible. Real access control lives in Firestore Security Rules
-// (configured in the Firebase Console, not in this file).
-const firebaseConfig = {
-  apiKey: "AIzaSyCnrkEbVOM3i7f59rAnWN9mgPC9iekEuIA",
-  authDomain: "badminton-manager-e77bb.firebaseapp.com",
-  projectId: "badminton-manager-e77bb",
-  storageBucket: "badminton-manager-e77bb.firebasestorage.app",
-  messagingSenderId: "402072472322",
-  appId: "1:402072472322:web:a212ed6eaff7ec10fbd01b",
-  measurementId: "G-2EFE485QTK"
-};
-
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
-console.log("Firebase is ready to use");
+// Data is stored in this browser only (see local-db.js) — no Firebase.
 
 // 👇 เซ็ตระบบ Save แบบ Debounce
 let saveTimeout = null;
@@ -52,8 +36,8 @@ function saveData() {
     if (typeof db !== 'undefined') {
         const roomIdToSave = currentRoomId ? currentRoomId : 'main-court';
         db.collection('rooms').doc(roomIdToSave).set(data)
-          .then(() => console.log("☁️ Synced to Room:", roomIdToSave))
-          .catch((error) => console.error("❌ Firebase Error: ", error));
+          .then(() => console.log("💾 Saved Room:", roomIdToSave))
+          .catch((error) => console.error("❌ Save Error: ", error));
     }
 }
 
@@ -117,9 +101,9 @@ function loadData() {
 // app.js), and app.js's versions silently won because it loads later — except
 // app.js's versions called a function that didn't exist (startRealtimeSync),
 // so real-time sync never actually started. Those functions now live only in
-// app.js, and correctly call syncFromFirebase() below.
+// app.js, and correctly call syncFromLocal() below.
 
-function syncFromFirebase() {
+function syncFromLocal() {
     if (typeof db === 'undefined') return;
 
     db.collection('rooms').doc(currentRoomId).onSnapshot((doc) => {
@@ -145,7 +129,7 @@ function syncFromFirebase() {
             updateQueueDisplay();
             updateDashboard();
 
-            console.log("📡 ข้อมูล Sync จาก Firebase เรียบร้อย!");
+            console.log("📡 ข้อมูล Sync จากเบราว์เซอร์ เรียบร้อย!");
         }
     });
 }

@@ -222,14 +222,13 @@
 
             <div class="btn-row">
                 <button class="btn btn-blue" onclick="copyLineSummary()">💬 คัดลอกสรุปส่ง LINE</button>
-                <button class="btn btn-purple" onclick="saveBill()">💾 บันทึกผลลง Firebase</button>
+                <button class="btn btn-purple" onclick="saveBill()">💾 บันทึกผล</button>
             </div>
         </div>
 
     </div>
 
-    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
+    <script src="local-db.js"></script>
 
     <script>
         function sanitizeHTML(str) {
@@ -238,19 +237,6 @@
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
             }[tag] || tag));
         }
-
-        // Note: this apiKey is safe to be public — see database.html for the same note.
-        const firebaseConfig = {
-            apiKey: "AIzaSyCnrkEbVOM3i7f59rAnWN9mgPC9iekEuIA",
-            authDomain: "badminton-manager-e77bb.firebaseapp.com",
-            projectId: "badminton-manager-e77bb",
-            storageBucket: "badminton-manager-e77bb.firebasestorage.app",
-            messagingSenderId: "402072472322",
-            appId: "1:402072472322:web:a212ed6eaff7ec10fbd01b",
-            measurementId: "G-2EFE485QTK"
-        };
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.firestore();
 
         const HOUR_MS = 60 * 60 * 1000;
 
@@ -265,7 +251,7 @@
         let recalcTimer = null;
 
         // ==========================================
-        // 1) โหลดรายชื่อห้อง (วันที่) จาก Firebase
+        // 1) โหลดรายชื่อห้อง (วันที่) จากเบราว์เซอร์
         // ==========================================
         async function loadRoomList() {
             const select = document.getElementById('room-select');
@@ -770,11 +756,11 @@
         }
 
         // ==========================================
-        // บันทึกผลลง Firebase (คอลเลกชัน bills เดิมที่เตรียมไว้ใน history.html)
+        // บันทึกผล (คอลเลกชัน bills เดิมที่เตรียมไว้ใน history.html)
         // ==========================================
         async function saveBill() {
             if (!lastResult || !selectedRoomId) return;
-            if (!confirm('บันทึกผลสรุปยอดนี้ลง Firebase เลยไหม? (จะทับของเก่าถ้าห้องนี้เคยบันทึกไว้แล้ว)')) return;
+            if (!confirm('บันทึกผลสรุปยอดนี้เลยไหม? (จะทับของเก่าถ้าห้องนี้เคยบันทึกไว้แล้ว)')) return;
 
             const { bucketInfo, playerResults, totalCourtCost, shuttleTotal, grandTotal, closing, totalCourts, pricePerCourtHour, perCourtOn, courtHours, shuttlePrice, shuttleQty, sideCourt } = lastResult;
             const manualPlayers = sessionPlayers.filter(p => p.manual).map(p => ({ name: p.name, checkInTime: p.checkInDate.toISOString() }));
@@ -796,10 +782,10 @@
                 alert('💾 บันทึกผลสรุปยอดเรียบร้อย!');
             } catch (err) {
                 console.error(err);
-                // Show the real Firestore error (permission-denied, invalid-argument, etc.)
+                // Show the real error (permission-denied, invalid-argument, etc.)
                 // instead of a generic message — this is new, unproven code path so we
                 // need to see the actual cause if it fails again.
-                alert(`❌ บันทึกไม่สำเร็จ\n\nรายละเอียด: ${err.code ? `[${err.code}] ` : ''}${err.message || err}\n\nถ้าขึ้นว่า "permission-denied" หรือ "Missing or insufficient permissions" แปลว่า Firestore Security Rules ยังไม่อนุญาตให้เขียนคอลเลกชัน "bills" — ต้องไปเพิ่ม Rule ใน Firebase Console`);
+                alert(`❌ บันทึกไม่สำเร็จ\n\nรายละเอียด: ${err.code ? `[${err.code}] ` : ''}${err.message || err}`);
             }
         }
 
