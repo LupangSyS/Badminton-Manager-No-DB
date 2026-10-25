@@ -35,16 +35,6 @@ function generateRoomCode() {
     return `${datePart}-${randomPart}`;
 }
 
-// 📋 วางรหัสห้องจากคลิปบอร์ด — เผื่อเพื่อนส่งรหัสห้องมาทางแชท จะได้ไม่ต้องพิมพ์เอง
-async function pasteRoomCode() {
-    try {
-        const text = await navigator.clipboard.readText();
-        if (text) document.getElementById('room-code-input').value = text.trim().toUpperCase();
-    } catch (err) {
-        alert('ไม่สามารถวางรหัสได้ กรุณาคัดลอกรหัสห้องอีกครั้ง หรือพิมพ์รหัสด้วยตนเอง');
-    }
-}
-
 // 👑 1. สร้างห้องใหม่ (Host)
 function createRoom() {
     currentRoomId = generateRoomCode();
@@ -81,37 +71,56 @@ function createRoom() {
     alert(`✅ สร้างห้องเรียบร้อยแล้ว รหัสห้อง: ${currentRoomId}`);
 }
 
-// 📱 2. เข้าดูคิว (คนดู) — read-only, must NOT run local game-logic intervals
-function joinRoom() {
-    const input = document.getElementById('room-code-input');
-    const roomInput = input ? input.value.trim().toUpperCase() : '';
-    if (!roomInput) { alert("กรุณากรอกรหัสห้อง"); return; }
+// 📂 เลือกห้องเดิมจากข้อมูลที่บันทึกไว้ในเครื่องนี้ (ไม่ต้องจำรหัสห้อง)
+function openRoomPicker() {
+    const modal = document.getElementById('roomPickerModal');
+    const listDiv = document.getElementById('roomPickerList');
+    modal.style.display = 'flex';
+    listDiv.innerHTML = '<div style="padding:20px; text-align:center;">กำลังโหลดข้อมูล... ⏳</div>';
 
-    currentRoomId = roomInput;
-    isHost = false;
+    db.collection('rooms').get().then(snapshot => {
+        const rooms = [];
+        snapshot.forEach(doc => {
+            const d = doc.data();
+            if (!d || ((!d.players || d.players.length === 0) && (!d.matchLogs || d.matchLogs.length === 0))) return;
+            rooms.push({
+                id: doc.id,
+                updated: d.lastUpdated ? new Date(d.lastUpdated) : null,
+                playerCount: (d.players || []).length,
+                matchCount: (d.matchLogs || []).length
+            });
+        });
+        rooms.sort((a, b) => (b.updated ? b.updated.getTime() : 0) - (a.updated ? a.updated.getTime() : 0));
 
-    sessionStorage.setItem('ROOM_ID', currentRoomId);
-    sessionStorage.setItem('IS_HOST', 'false');
+        if (rooms.length === 0) {
+            listDiv.innerHTML = '<div style="padding:20px; text-align:center; color:#64748b;">ยังไม่มีห้องที่บันทึกไว้ในเครื่องนี้<br>กรุณาสร้างห้องใหม่</div>';
+            return;
+        }
+        listDiv.innerHTML = rooms.map(r => {
+            const when = r.updated ? r.updated.toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }) : '-';
+            return `<div class="db-player-item" style="cursor:pointer; flex-direction:column; align-items:flex-start;" onclick="pickRoom('${encodeURIComponent(r.id)}')">
+                <strong style="font-family:monospace;">${sanitizeHTML(r.id)}</strong>
+                <small style="color:#64748b;">อัปเดตล่าสุด ${sanitizeHTML(when)} · ผู้เล่น ${r.playerCount} คน · แข่งแล้ว ${r.matchCount} แมตช์</small>
+            </div>`;
+        }).join('');
+    }).catch(() => {
+        listDiv.innerHTML = '<div style="color:red; text-align:center;">ไม่สามารถโหลดข้อมูลได้ กรุณาลองใหม่อีกครั้ง</div>';
+    });
+}
 
-    document.body.classList.add('view-mode');
-    document.getElementById('landing-page').style.display = 'none';
-    document.getElementById('app-container').style.display = 'block';
+function closeRoomPicker() {
+    document.getElementById('roomPickerModal').style.display = 'none';
+}
 
-    document.getElementById('display-room-id').innerText = currentRoomId;
-    document.getElementById('display-role').innerText = "📱 SPECTATOR (ผู้ชม)";
-    document.getElementById('display-role').style.background = "#7f8c8d";
-
-    const controlPanel = document.querySelector('.control-sidebar-container');
-    if (controlPanel) controlPanel.style.display = 'none';
-
-    if (typeof syncFromLocal === 'function') syncFromLocal();
+function pickRoom(encodedId) {
+    closeRoomPicker();
+    joinRoomAdmin(decodeURIComponent(encodedId));
 }
 
 // 🛠️ 3. เข้าห้องแอดมิน (คุมคิวผ่านมือถือ)
-function joinRoomAdmin() {
-    const input = document.getElementById('room-code-input');
-    const roomInput = input ? input.value.trim().toUpperCase() : '';
-    if (!roomInput) { alert("กรุณากรอกรหัสห้อง"); return; }
+function joinRoomAdmin(roomId) {
+    const roomInput = (roomId || '').trim().toUpperCase();
+    if (!roomInput) { alert("กรุณาเลือกห้อง"); return; }
 
     currentRoomId = roomInput;
     isHost = true;
@@ -1529,10 +1538,17 @@ async function copyLineGroupReport() {
 
 async function endSession() {
     const anyCourtActive = courts.some(c => countRealPlayers(c) > 0);
+    let msg = '🏁 ต้องการจบการแข่งขันวันนี้หรือไม่?\n\n' +
+        'เมื่อกดตกลง ระบบจะ:\n' +
+        '• บันทึกข้อมูลของห้องนี้ไว้ในเครื่อง\n' +
+        '• ดาวน์โหลดภาพสรุปผลการแข่งขัน\n' +
+        '• ออกจากห้องและกลับไปที่หน้าแรก\n\n' +
+        'ข้อมูลจะไม่ถูกลบ สามารถกลับมาเปิดห้องนี้ได้ทาง "เปิดห้องเดิมต่อ" ในเบราว์เซอร์เครื่องนี้';
     if (anyCourtActive) {
-        if (!confirm('⚠️ ยังมีคอร์ทที่กำลังแข่งขันอยู่ หากจบตอนนี้ ทุกคอร์ทจะหยุดทันที (เกมที่ค้างอยู่จะไม่ถูกนับว่าจบ) ต้องการดำเนินการต่อหรือไม่?')) return;
-        stopAllCourtsWithoutScoring();
+        msg += '\n\n⚠️ ขณะนี้ยังมีคอร์ทที่กำลังแข่งขันอยู่ ทุกคอร์ทจะหยุดทันที และเกมที่ค้างอยู่จะไม่ถูกนับว่าจบ';
     }
+    if (!confirm(msg)) return;
+    if (anyCourtActive) stopAllCourtsWithoutScoring();
 
     // Save right now instead of waiting for the usual debounced triggerSave()
     // — we're about to reload the page, so a delayed save would never fire.
@@ -1548,7 +1564,7 @@ async function endSession() {
     sessionStorage.removeItem('ROOM_ID');
     sessionStorage.removeItem('IS_HOST');
     localStorage.removeItem('BADMINTON_HISTORY_CACHE');
-    alert("✅ จบการแข่งขันวันนี้แล้ว ปิดระบบบนอุปกรณ์นี้เรียบร้อย");
+    alert("✅ จบการแข่งขันวันนี้เรียบร้อยแล้ว ข้อมูลถูกบันทึกไว้ในเครื่อง");
     window.location.reload();
 }
 
@@ -1766,20 +1782,6 @@ function restoreState(json) {
     if (state.courtCount) { courtCount = state.courtCount; }
     courts = state.courts.map(c => { c.interval = null; return c; });
     renderCourts(); updateQueueDisplay(); updateNextMatchPanel();
-}
-
-function showShareLinkModal() {
-    const baseUrl = (typeof APP_URL !== 'undefined' && APP_URL) ? APP_URL : window.location.href.split('?')[0];
-    const viewerUrl = baseUrl + '?mode=viewer';
-    const html = `<div style="text-align:center;"><h3>📡 ลิงก์สำหรับแชร์</h3><input type="text" value="${viewerUrl}" id="share-link-input" style="width:100%; padding:10px;"><button class="success" onclick="copyShareLink()">📋 Copy</button><button class="secondary" onclick="closeModal('booking-modal')">ปิด</button></div>`;
-    document.getElementById('booking-inputs').innerHTML = html;
-    document.getElementById('booking-modal').style.display = 'flex';
-    document.querySelector('#booking-modal .modal-actions').style.display = 'none';
-}
-
-function copyShareLink() {
-    const copyText = document.getElementById("share-link-input");
-    copyText.select(); document.execCommand("copy"); alert("คัดลอกลิงก์เรียบร้อยแล้ว");
 }
 
 function savePlayerProfileToCloud(player) {

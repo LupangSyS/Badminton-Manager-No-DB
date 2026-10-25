@@ -31,12 +31,9 @@
                     👑 1. สร้างห้องใหม่ (Host)
                 </button>
 
-                <div class="room-code-row" style="margin-top: 14px;">
-                    <input type="text" id="room-code-input" placeholder="รหัสห้องเดิม เช่น 0809-X805">
-                </div>
 
                 <div class="pill-row" style="margin-top: 10px;">
-                    <button onclick="joinRoomAdmin()" class="pill-btn pill-amber" style="color:white; border:none; cursor:pointer;">
+                    <button onclick="openRoomPicker()" class="pill-btn pill-amber" style="color:white; border:none; cursor:pointer;">
                         🛠️ 2. เปิดห้องเดิมต่อ
                     </button>
                 </div>
@@ -66,7 +63,7 @@
                 </button>
             </div>
 
-            <p class="landing-hint">กด "1. สร้างห้องใหม่ (Host)" เพื่อเริ่มต้นใช้งาน หากต้องการกลับมาจัดการห้องเดิม ให้กรอกรหัสห้องแล้วกด "2. เปิดห้องเดิมต่อ" (ใช้ได้เฉพาะในเบราว์เซอร์เครื่องนี้)</p>
+            <p class="landing-hint">กด "1. สร้างห้องใหม่ (Host)" เพื่อเริ่มต้นใช้งาน หากต้องการกลับมาจัดการห้องเดิม ให้กด "2. เปิดห้องเดิมต่อ" แล้วเลือกห้องจากรายการ (ใช้ได้เฉพาะในเบราว์เซอร์เครื่องนี้)</p>
         </div>
     </div>
 
@@ -317,6 +314,17 @@
     <script src="matchmaker.js"></script>
     <script src="local-sync.js"></script>
     <script src="app.js"></script>
+
+    <div id="roomPickerModal" class="db-modal">
+        <div class="db-modal-content">
+            <h3 style="margin-top:0; color:#2c3e50;">📂 เลือกห้องที่ต้องการเปิดต่อ</h3>
+            <div id="roomPickerList" class="db-player-list"></div>
+            <div class="db-modal-actions">
+                <span></span>
+                <button class="secondary" onclick="closeRoomPicker()">↩ ปิด</button>
+            </div>
+        </div>
+    </div>
 
     <div id="dbModal" class="db-modal">
         <div class="db-modal-content">
