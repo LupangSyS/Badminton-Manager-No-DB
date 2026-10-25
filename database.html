@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Player Database & Hall of Fame</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --accent: #4FCB8D; --accent-light: #7EE3AF; --amber: #FFB65C; --rose: #FF6F91;
+            --blue: #4FB3F0; --purple: #B980E8; --slate-border: rgba(226, 232, 240, 0.9);
+        }
+        * { box-sizing: border-box; }
+        body { font-family: 'Prompt', 'Inter', sans-serif; background-color: #f8fafc; padding: 20px; color: #1e293b; margin: 0; }
+        .top-brand-bar {
+            background: #0f172a; color: white; padding: 14px 22px; border-radius: 16px;
+            display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; max-width: 1200px; margin-left:auto; margin-right:auto;
+            box-shadow: 0 8px 20px -6px rgba(15, 23, 42, 0.35);
+        }
+        .top-brand-bar .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.15em; }
+        .top-brand-bar .brand-icon {
+            width: 36px; height: 36px; border-radius: 10px;
+            background: linear-gradient(135deg, #2FAE72 0%, var(--accent-light) 100%);
+            display: flex; align-items: center; justify-content: center; font-size: 1.2em;
+        }
+        .top-brand-bar a { color: #cbd5e1; text-decoration: none; font-size: 0.85em; font-weight: 600; padding: 8px 14px; border-radius: 999px; background: rgba(255,255,255,0.08); }
+        .top-brand-bar a:hover { background: rgba(255,255,255,0.16); }
+        p.subtitle { text-align: center; color: #64748b; margin: 0 0 25px 0; }
+        .sort-bar {
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+            max-width: 1200px; margin: 0 auto 22px; font-size: 0.9em; color: #475569;
+        }
+        .sort-bar select {
+            padding: 8px 14px; border-radius: 999px; border: 1px solid var(--slate-border);
+            background: white; font-family: inherit; font-size: 0.95em; font-weight: 600;
+            color: #1e293b; cursor: pointer;
+        }
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 20px;
+            max-width: 1200px; margin: 0 auto;
+        }
+        .player-card {
+            background: rgba(255,255,255,0.9); backdrop-filter: blur(10px); border: 1px solid var(--slate-border);
+            border-radius: 20px; padding: 22px; text-align: center;
+            box-shadow: 0 10px 24px -8px rgba(15,23,42,0.1); transition: transform 0.2s, box-shadow 0.2s;
+            position: relative; overflow: hidden;
+        }
+        .player-card:hover { transform: translateY(-4px); box-shadow: 0 16px 32px -10px rgba(15,23,42,0.16); }
+        .avatar-img {
+            width: 96px; height: 96px; border-radius: 50%; object-fit: cover;
+            border: 4px solid white; margin-bottom: 14px; cursor: pointer;
+            box-shadow: 0 4px 14px rgba(15,23,42,0.18); background: #eee;
+        }
+        .rank-badge {
+            position: absolute; top: 16px; right: 16px; font-weight: 800;
+            padding: 4px 11px; border-radius: 999px; color: white; font-size: 0.78em;
+            box-shadow: 0 3px 8px rgba(15,23,42,0.15);
+        }
+        .player-card h2 { font-size: 1.15em; margin: 0 0 14px 0; }
+        .stat-row { display: flex; justify-content: space-between; border-bottom: 1px solid rgba(15,23,42,0.06); padding: 8px 2px; font-size: 0.88em;}
+        .stat-row:last-of-type { border-bottom: none; }
+        .stat-val { font-weight: 800; color: var(--blue); }
+        .card-buttons { display: flex; gap: 8px; margin-top: 14px; }
+        .btn-edit {
+            flex: 1; padding: 9px 10px; background: #94a3b8; color: white;
+            border: none; border-radius: 999px; cursor: pointer; font-family: inherit; font-size: 0.78em; font-weight: 700;
+            transition: 0.2s; box-shadow: 0 2px 6px rgba(15,23,42,0.12);
+        }
+        .btn-edit:hover { opacity: 0.9; transform: translateY(-1px); }
+        .btn-edit.loading { background: var(--amber); cursor: wait; }
+        .btn-edit-profile { background: var(--blue); }
+        .btn-delete-profile { background: var(--rose); flex: 0 0 auto; padding: 9px 14px; }
+
+        /* Edit modal */
+        .edit-modal-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.55); backdrop-filter: blur(3px);
+            align-items: center; justify-content: center; z-index: 1000;
+        }
+        .edit-modal-box {
+            background: white; border-radius: 22px; padding: 26px; width: 340px; max-width: 90vw;
+            box-shadow: 0 20px 50px -10px rgba(15,23,42,0.35);
+        }
+        .edit-modal-box h3 { margin: 0 0 18px 0; text-align: center; }
+        .edit-field { margin-bottom: 14px; }
+        .edit-field label { display: block; font-size: 0.82em; font-weight: 700; margin-bottom: 5px; color: #64748b; }
+        .edit-field input, .edit-field select {
+            width: 100%; padding: 10px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc;
+            font-family: inherit; font-size: 1em; box-sizing: border-box;
+        }
+        .edit-modal-actions { display: flex; gap: 8px; margin-top: 20px; }
+        .edit-modal-actions button {
+            flex: 1; padding: 11px; border: none; border-radius: 999px; cursor: pointer;
+            font-family: inherit; font-weight: 700; font-size: 0.9em;
+        }
+        .btn-save { background: var(--accent); color: white; }
+        .btn-cancel { background: #e2e8f0; color: #334155; }
+    </style>
+</head>
+<body>
+
+    <div class="top-brand-bar">
+        <div class="brand"><span class="brand-icon">🏆</span> Hall of Fame</div>
+        <a href="index.html">🏠 หน้าแรก</a>
+    </div>
+    <p class="subtitle">ฐานข้อมูลผู้เล่นทั้งหมด (แก้ไขข้อมูล/อัปโหลดรูปตรงขึ้น Firebase)</p>
+
+    <div class="sort-bar">
+        <label for="sort-select">🔽 เรียงตาม:</label>
+        <select id="sort-select" onchange="renderGrid()">
+            <option value="mmr_desc">MMR สูง → ต่ำ</option>
+            <option value="name_az">ชื่อ A-Z / ก-ฮ</option>
+            <option value="winrate_desc">อัตราชนะ สูง → ต่ำ</option>
+            <option value="games_desc">ลงเล่นเยอะสุด</option>
+        </select>
+    </div>
+
+    <div class="grid-container" id="database-grid">
+        <div style="text-align:center; width:100%; grid-column: 1 / -1;">กำลังโหลดข้อมูลดาต้าเบส... ⏳</div>
+    </div>
+
+    <!-- แก้ไขข้อมูลผู้เล่น -->
+    <div class="edit-modal-overlay" id="edit-modal-overlay">
+        <div class="edit-modal-box">
+            <h3>✏️ แก้ไขข้อมูลผู้เล่น</h3>
+            <div class="edit-field">
+                <label>ชื่อ</label>
+                <input type="text" id="edit-field-name">
+            </div>
+            <div class="edit-field">
+                <label>ระดับฝีมือ</label>
+                <select id="edit-field-level">
+                    <option value="BG">🟢 BG (Beginner)</option>
+                    <option value="N">🔵 N (Novice)</option>
+                    <option value="S">🟡 S (Semi)</option>
+                    <option value="P">🟣 P (Pro)</option>
+                </select>
+            </div>
+            <div class="edit-field">
+                <label>เพศ</label>
+                <select id="edit-field-gender">
+                    <option value="M">ชาย</option>
+                    <option value="F">หญิง</option>
+                </select>
+            </div>
+            <div class="edit-modal-actions">
+                <button class="btn-cancel" onclick="closeEditModal()">ยกเลิก</button>
+                <button class="btn-save" onclick="saveEditedProfile()">💾 บันทึก</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-storage-compat.js"></script>
+
+    <script>
+        // 🛡️ ป้องกัน XSS ตอนแทรกชื่อผู้เล่นลงหน้าเว็บ
+        function sanitizeHTML(str) {
+            if (!str) return '';
+            return str.replace(/[&<>'"]/g, tag => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+            }[tag] || tag));
+        }
+
+        // Note: this apiKey is safe to be public — Firebase web config is designed
+        // to be client-visible. Real access control lives in Firestore/Storage
+        // Security Rules (configured in the Firebase Console, not in this file).
+        const firebaseConfig = {
+            apiKey: "AIzaSyCnrkEbVOM3i7f59rAnWN9mgPC9iekEuIA",
+            authDomain: "badminton-manager-e77bb.firebaseapp.com",
+            projectId: "badminton-manager-e77bb",
+            storageBucket: "badminton-manager-e77bb.firebasestorage.app",
+            messagingSenderId: "402072472322",
+            appId: "1:402072472322:web:a212ed6eaff7ec10fbd01b",
+            measurementId: "G-2EFE485QTK"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        const storage = firebase.storage();
+
+        const LEVEL_COLORS = { 'BG': '#4FCB8D', 'N': '#4FB3F0', 'S': '#FFB65C', 'P': '#B980E8' };
+
+        // Cache of the currently-loaded profiles, keyed by encoded name, so the
+        // edit modal can be pre-filled without a separate Firestore read.
+        let playersCache = {};
+        let allPlayersRaw = []; // unsorted snapshot data — re-sorted on demand, no refetch needed
+
+        function getWinRate(p) { return p.gamesPlayed > 0 ? (p.wins / p.gamesPlayed) : 0; }
+
+        function sortPlayers(list) {
+            const sortBy = document.getElementById('sort-select').value;
+            const sorted = [...list];
+            if (sortBy === 'name_az') sorted.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'th'));
+            else if (sortBy === 'winrate_desc') sorted.sort((a, b) => getWinRate(b) - getWinRate(a));
+            else if (sortBy === 'games_desc') sorted.sort((a, b) => (b.gamesPlayed || 0) - (a.gamesPlayed || 0));
+            else sorted.sort((a, b) => (b.mmr || 0) - (a.mmr || 0)); // mmr_desc (default)
+            return sorted;
+        }
+
+        db.collection('players_profile').onSnapshot(snapshot => {
+            allPlayersRaw = [];
+            snapshot.forEach(doc => { allPlayersRaw.push(doc.data()); });
+            renderGrid();
+        });
+
+        function renderGrid() {
+            const grid = document.getElementById('database-grid');
+            grid.innerHTML = '';
+
+            const players = sortPlayers(allPlayersRaw);
+            playersCache = {};
+
+            players.forEach(p => {
+                const rankColor = LEVEL_COLORS[p.level || 'BG'];
+                const safeName = sanitizeHTML(p.name); // for display text
+                // ✅ FIX: encoded token (not the raw or HTML-escaped name) used for the
+                // element id and the onclick argument — a raw name containing a quote
+                // (e.g. "O'Brien") used to break this button entirely.
+                const encName = encodeURIComponent(p.name);
+                playersCache[encName] = p;
+                const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=random&color=fff&size=200`;
+                const avatar = p.avatarUrl || defaultAvatar;
+                const winRate = p.gamesPlayed > 0 ? Math.round((p.wins / p.gamesPlayed) * 100) : 0;
+                const genderTag = p.gender === 'F' ? ' 🌸' : '';
+
+                grid.innerHTML += `
+                    <div class="player-card">
+                        <div class="rank-badge" style="background: ${rankColor};">${p.level || 'BG'}</div>
+                        <img src="${avatar}" class="avatar-img" id="img-${encName}" title="คลิกเพื่อเปลี่ยนรูป" onclick="triggerUpload('${encName}')" onerror="this.src='${defaultAvatar}'">
+                        <h2 style="margin: 0 0 15px 0;">${safeName}${genderTag}</h2>
+
+                        <div class="stat-row"><span>⚔️ MMR:</span> <span class="stat-val" style="color:var(--purple); font-size:1.1em;">${p.mmr || 100}</span></div>
+                        <div class="stat-row"><span>🏸 ลงเล่น:</span> <span class="stat-val">${p.gamesPlayed || 0} เกม</span></div>
+                        <div class="stat-row"><span>🏆 ชนะ:</span> <span class="stat-val">${p.wins || 0} ครั้ง</span></div>
+                        <div class="stat-row"><span>🔥 อัตราชนะ:</span> <span class="stat-val">${winRate}%</span></div>
+
+                        <div class="card-buttons">
+                            <button class="btn-edit" id="btn-${encName}" onclick="triggerUpload('${encName}')">📸 รูป</button>
+                            <button class="btn-edit btn-edit-profile" onclick="openEditModal('${encName}')">✏️ แก้ไข</button>
+                        </div>
+                        <div class="card-buttons">
+                            <button class="btn-edit btn-delete-profile" style="flex:1;" onclick="deleteProfile('${encName}')">🗑 ลบผู้เล่น</button>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        // ----------------------------------------------------
+        // ✏️ แก้ไขชื่อ / ระดับ / เพศ
+        // ----------------------------------------------------
+        let editingEncName = null;
+
+        function openEditModal(encName) {
+            const p = playersCache[encName];
+            if (!p) return;
+            editingEncName = encName;
+            document.getElementById('edit-field-name').value = p.name || '';
+            document.getElementById('edit-field-level').value = p.level || 'BG';
+            document.getElementById('edit-field-gender').value = p.gender || 'M';
+            document.getElementById('edit-modal-overlay').style.display = 'flex';
+        }
+
+        function closeEditModal() {
+            document.getElementById('edit-modal-overlay').style.display = 'none';
+            editingEncName = null;
+        }
+
+        async function saveEditedProfile() {
+            if (!editingEncName) return;
+            const original = playersCache[editingEncName];
+            if (!original) return;
+
+            const newName = document.getElementById('edit-field-name').value.trim();
+            const newLevel = document.getElementById('edit-field-level').value;
+            const newGender = document.getElementById('edit-field-gender').value;
+            if (!newName) { alert('กรุณาใส่ชื่อ'); return; }
+
+            const updated = { ...original, name: newName, level: newLevel, gender: newGender };
+
+            try {
+                if (newName !== original.name) {
+                    // The player's name is literally their document ID in Firestore,
+                    // so renaming means writing a new doc and removing the old one —
+                    // everything else (stats, MMR, avatar) moves over untouched.
+                    if (confirm(`เปลี่ยนชื่อจาก "${original.name}" เป็น "${newName}"? สถิติทั้งหมดจะย้ายไปกับชื่อใหม่`)) {
+                        await db.collection('players_profile').doc(newName).set(updated);
+                        await db.collection('players_profile').doc(original.name).delete();
+                    } else {
+                        return;
+                    }
+                } else {
+                    await db.collection('players_profile').doc(original.name).update({ level: newLevel, gender: newGender });
+                }
+                closeEditModal();
+            } catch (err) {
+                alert('❌ บันทึกไม่สำเร็จ เช็คเน็ตแล้วลองใหม่');
+                console.error(err);
+            }
+        }
+
+        // ----------------------------------------------------
+        // 🗑 ลบผู้เล่นออกจากฐานข้อมูล
+        // Note: the password check below runs in the browser, so it's only a
+        // speed bump against an accidental tap — anyone who opens dev tools
+        // can read it in plain text. It's not real access control (same as
+        // this file's Firestore rules note above) — fine for a small trusted
+        // group, but don't rely on it to stop someone determined.
+        // ----------------------------------------------------
+        async function deleteProfile(encName) {
+            const p = playersCache[encName];
+            if (!p) return;
+
+            if (!confirm(`⚠️ ต้องการลบ "${p.name}" ออกจากฐานข้อมูลถาวรใช่ไหม? สถิติทั้งหมดจะหายไป กู้คืนไม่ได้`)) return;
+
+            const pass = prompt('กรุณาใส่รหัสผ่านแอดมินเพื่อยืนยันการลบ:');
+            if (pass === null) return; // cancelled
+            if (pass !== 'siberian') { alert('❌ รหัสผ่านผิด ยกเลิกการลบ'); return; }
+
+            try {
+                await db.collection('players_profile').doc(p.name).delete();
+            } catch (err) {
+                alert('❌ ลบไม่สำเร็จ เช็คเน็ตแล้วลองใหม่');
+                console.error(err);
+            }
+        }
+
+        // ----------------------------------------------------
+        // 📸 ระบบอัปโหลดภาพ — ผ่าน Firebase Storage
+        // ✅ FIX: this used to POST straight to ImgBB with a hardcoded API key
+        // sitting in plain text in this file (visible to anyone via "view
+        // source"). Firebase Storage was already loaded but unused — now the
+        // upload goes through it instead, so there's no third-party key exposed
+        // in the client at all. Access is governed by your Firebase Storage
+        // Security Rules in the console (same place as your Firestore rules).
+        // If uploads fail with a permission error, check that Storage Rules
+        // allow writes — Firebase's default rules require a signed-in user,
+        // and this app doesn't use Firebase Auth, so you may need a rule like:
+        //   allow read, write: if true;
+        // (fine for a small trusted-group tool; tighten later if needed).
+        // ----------------------------------------------------
+        function triggerUpload(encodedName) {
+            const playerName = decodeURIComponent(encodedName);
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const btn = document.getElementById(`btn-${encodedName}`);
+                if(btn) { btn.innerText = "⏳ กำลังอัปโหลด..."; btn.classList.add('loading'); }
+
+                try {
+                    const safePathName = playerName.replace(/[^a-zA-Z0-9ก-๙_-]/g, '_');
+                    const storageRef = storage.ref(`avatars/${safePathName}_${Date.now()}`);
+                    await storageRef.put(file);
+                    const newImageUrl = await storageRef.getDownloadURL();
+
+                    await db.collection('players_profile').doc(playerName).update({
+                        avatarUrl: newImageUrl
+                    });
+                    console.log(`✅ อัปเดตรูป ${playerName} สำเร็จ!`);
+                } catch (err) {
+                    alert("❌ อัปโหลดรูปไม่ผ่านว่ะ! เช็คเน็ต หรือ Storage Rules ใน Firebase Console");
+                    console.error(err);
+                } finally {
+                    if(btn) { btn.innerText = "📸 รูป"; btn.classList.remove('loading'); }
+                }
+            };
+
+            input.click();
+        }
+    </script>
+</body>
+</html>

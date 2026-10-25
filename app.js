@@ -1,0 +1,1954 @@
+// ==========================================
+// 🛡️ ระบบป้องกันการโดนแฮกผ่านการพิมพ์ชื่อ (XSS)
+// ==========================================
+function sanitizeHTML(str) {
+    if (!str) return '';
+    return str.replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+    }[tag] || tag));
+}
+
+// --- Persistence & State Management ---
+const STORAGE_KEY = 'BADMINTON_MANAGER_V7_DATA';
+
+
+// ==========================================
+// 🚪 ระบบ Lobby
+// ==========================================
+// ✅ FIX: these used to be declared a SECOND time in firebase-sync.js. Since
+// app.js loads last, its versions silently won — but they called a function
+// (startRealtimeSync) that never existed anywhere, so real-time sync never
+// actually started. This is now the one and only version, and it correctly
+// calls syncFromFirebase(). Also: only HOST/ADMIN browsers call init() —
+// that's what starts the auto-fill/auto-start timers. Spectator browsers
+// must never run those, or every open viewer tab ends up independently
+// writing to the shared Firebase document at the same time as the host.
+
+function generateRoomCode() {
+    const d = new Date();
+    const datePart = String(d.getDate()).padStart(2, '0') + String(d.getMonth() + 1).padStart(2, '0');
+    const randomPart = Math.random().toString(36).substring(2, 6).toUpperCase();
+    return `${datePart}-${randomPart}`;
+}
+
+// 📋 วางรหัสห้องจากคลิปบอร์ด — เผื่อเพื่อนส่งรหัสห้องมาทางแชท จะได้ไม่ต้องพิมพ์เอง
+async function pasteRoomCode() {
+    try {
+        const text = await navigator.clipboard.readText();
+        if (text) document.getElementById('room-code-input').value = text.trim().toUpperCase();
+    } catch (err) {
+        alert('วางไม่ได้ครับ ลองก็อปรหัสห้องมาใหม่ หรือพิมพ์เองก็ได้');
+    }
+}
+
+// 👑 1. สร้างห้องใหม่ (Host)
+function createRoom() {
+    currentRoomId = generateRoomCode();
+    isHost = true;
+
+    // This is a BRAND NEW room — it must never inherit another day's cached
+    // players/courts. Without this, init() below would load whatever got left
+    // in localStorage last time (e.g. the admin forgot to click "จบการตีแบด"),
+    // including stale gameStartTime values that show as impossible play times
+    // like "200 minutes" — and then immediately push that stale data into
+    // this new room's Firebase document.
+    localStorage.removeItem(STORAGE_KEY);
+
+    sessionStorage.setItem('ROOM_ID', currentRoomId);
+    sessionStorage.setItem('IS_HOST', 'true');
+
+    const landing = document.getElementById('landing-page');
+    const app = document.getElementById('app-container');
+    if (landing) landing.style.display = 'none';
+    if (app) app.style.display = 'block';
+
+    const roomDisp = document.getElementById('display-room-id');
+    const roleDisp = document.getElementById('display-role');
+    if (roomDisp) roomDisp.innerText = currentRoomId;
+    if (roleDisp) {
+        roleDisp.innerText = "👑 HOST (คนคุม)";
+        roleDisp.style.background = "#FF6F91";
+    }
+
+    init(); // host only: starts local auto-fill / timer intervals
+    if (typeof syncFromFirebase === 'function') syncFromFirebase();
+    if (typeof triggerSave === 'function') triggerSave(); // push initial state so joiners have something to read
+
+    alert(`✅ สร้างห้องสำเร็จ! รหัสห้องคือ: ${currentRoomId}`);
+}
+
+// 📱 2. เข้าดูคิว (คนดู) — read-only, must NOT run local game-logic intervals
+function joinRoom() {
+    const input = document.getElementById('room-code-input');
+    const roomInput = input ? input.value.trim().toUpperCase() : '';
+    if (!roomInput) { alert("ใส่รหัสห้องมาก่อนดิเว้ย!"); return; }
+
+    currentRoomId = roomInput;
+    isHost = false;
+
+    sessionStorage.setItem('ROOM_ID', currentRoomId);
+    sessionStorage.setItem('IS_HOST', 'false');
+
+    document.body.classList.add('view-mode');
+    document.getElementById('landing-page').style.display = 'none';
+    document.getElementById('app-container').style.display = 'block';
+
+    document.getElementById('display-room-id').innerText = currentRoomId;
+    document.getElementById('display-role').innerText = "📱 SPECTATOR (คนดู)";
+    document.getElementById('display-role').style.background = "#7f8c8d";
+
+    const controlPanel = document.querySelector('.control-sidebar-container');
+    if (controlPanel) controlPanel.style.display = 'none';
+
+    if (typeof syncFromFirebase === 'function') syncFromFirebase();
+}
+
+// 🛠️ 3. เข้าห้องแอดมิน (คุมคิวผ่านมือถือ)
+function joinRoomAdmin() {
+    const input = document.getElementById('room-code-input');
+    const roomInput = input ? input.value.trim().toUpperCase() : '';
+    if (!roomInput) { alert("ใส่รหัสห้องมาก่อนดิเว้ย!"); return; }
+
+    currentRoomId = roomInput;
+    isHost = true;
+
+    // Don't let another room's cached state flash on screen while we wait
+    // for the real data to arrive from Firebase (see createRoom() for why).
+    localStorage.removeItem(STORAGE_KEY);
+
+    sessionStorage.setItem('ROOM_ID', currentRoomId);
+    sessionStorage.setItem('IS_HOST', 'true');
+
+    document.getElementById('landing-page').style.display = 'none';
+    document.getElementById('app-container').style.display = 'block';
+
+    document.getElementById('display-room-id').innerText = currentRoomId;
+    document.getElementById('display-role').innerText = "🛠️ ADMIN (คนคุมคิว)";
+    document.getElementById('display-role').style.background = "#FF9F5C";
+
+    const controlPanel = document.querySelector('.control-sidebar-container');
+    if (controlPanel) controlPanel.style.display = 'block';
+
+    init(); // admin controls the queue too, so local intervals are needed
+    if (typeof syncFromFirebase === 'function') syncFromFirebase();
+}
+
+
+// --- ฟังก์ชันเช็คว่าเปิดหน้าต่างค้างอยู่มั้ย ---
+function isModalOpen() {
+    const booking = document.getElementById('booking-modal');
+    const winner = document.getElementById('winner-modal');
+    const cooldown = document.getElementById('cooldown-confirm-overlay');
+    return (booking && booking.style.display === 'flex')
+        || (winner && winner.style.display === 'flex')
+        || (cooldown && cooldown.style.display === 'flex');
+}
+
+
+const countRealPlayers = (court) => {
+    return court.players.filter(p => p !== null && p !== undefined).length;
+};
+
+
+const toggleLevel = (id) => {
+    const p = players.find(x => x.id === id);
+    if (!p) return;
+    const levels = ['BG', 'N', 'S', 'P'];
+    const currentIdx = levels.indexOf(p.level || 'BG');
+    p.level = levels[(currentIdx + 1) % levels.length];
+    updateQueueDisplay();
+    savePlayerProfileToCloud(p);
+};
+
+
+function getWinRate(p) {
+    return p.gamesPlayed > 0 ? (p.wins / p.gamesPlayed) : 0;
+}
+
+
+const addPlayerToCourt = (court, player) => {
+    let emptyIdx = court.players.findIndex(p => p === null || p === undefined);
+    if (emptyIdx !== -1) {
+        court.players[emptyIdx] = player;
+        const activeCount = court.players.filter(p => p !== null).length;
+        if (activeCount === 4) court.gameStartTime = Date.now();
+    } else {
+        if (court.players.length < 4) court.players.push(player);
+        else console.error("สนามเต็มแล้ว ยัดไม่เข้า!");
+    }
+};
+
+
+
+// --- Init ---
+// Only ever called for HOST/ADMIN browsers (see createRoom/joinRoomAdmin/window.onload).
+function init() {
+    renderCourts();
+    updateQueueDisplay();
+
+    if (loadData()) {
+        console.log("📂 Loaded data from LocalStorage");
+    }
+
+    renderCourts();
+    updateQueueDisplay();
+
+    setInterval(() => {
+        if (!isModalOpen()) autoFillCourts();
+    }, 1000);
+
+    setInterval(() => {
+        courts.forEach((c, idx) => {
+            if (c.state === 'playing' && c.gameStartTime) {
+                const diffMs = Date.now() - c.gameStartTime;
+                if (diffMs >= MAX_GAME_DURATION_MS) {
+                    autoAbortStuckCourt(idx);
+                    return;
+                }
+                const diffSec = Math.floor(diffMs / 1000);
+                c.timer = diffSec;
+                const el = document.getElementById(`timer-${idx}`);
+                if (el) el.innerText = formatTime(diffSec);
+            }
+        });
+    }, 1000);
+
+    setInterval(() => {
+        if (!isModalOpen()) updateQueueDisplay();
+    }, 60000);
+}
+
+function toggleView(viewName) {
+    document.getElementById('main-view').classList.add('hidden');
+    document.getElementById('overview-view').classList.add('hidden');
+    if(viewName === 'main') {
+        document.getElementById('main-view').classList.remove('hidden');
+    } else {
+        document.getElementById('overview-view').classList.remove('hidden');
+        renderOverview();
+    }
+}
+
+function toggleRankedMode() {
+    const checkbox = document.getElementById('ranked-mode-toggle');
+    isRankedMode = checkbox.checked;
+
+    // ✨ ถ้าเปิด Rank ให้ปิด MMR อัตโนมัติ (สลับขั้วกัน)
+    if (isRankedMode) {
+        const mmrCB = document.getElementById('mmr-mode-toggle');
+        if(mmrCB) mmrCB.checked = false;
+        isMMRMode = false;
+
+        alert('🏆 เปิดโหมดจัดอันดับ! \n(ปิดโหมด MMR แล้ว)');
+    } else {
+        alert('👌 ปิดโหมดจัดอันดับ');
+    }
+    updateNextMatchPanel();
+    triggerSave();
+}
+
+function toggleMMRMode() {
+    const checkbox = document.getElementById('mmr-mode-toggle');
+    isMMRMode = checkbox.checked;
+    if (isMMRMode) {
+        const rankCB = document.getElementById('ranked-mode-toggle');
+        if(rankCB) rankCB.checked = false;
+        isRankedMode = false;
+        alert('⚖️ เปิดโหมด MMR!');
+    } else {
+        alert('👌 ปิดโหมด MMR');
+    }
+    updateNextMatchPanel();
+    triggerSave();
+}
+
+// ✅ FIX: the "Anti Deja-vu" toggle is gone — All-Out mode always applies the
+// teammate-rotation cooldown now (see matchmaker.js: getCooldownViolations),
+// so there's no separate on/off switch or handler needed anymore.
+
+function getPairKey(id1, id2) { return id1 < id2 ? `${id1}-${id2}` : `${id2}-${id1}`; }
+function recordPairing(id1, id2) {
+    const key = getPairKey(id1, id2);
+    if (!pairingHistory[key]) pairingHistory[key] = 0;
+    pairingHistory[key]++;
+}
+function getPairCount(id1, id2) { return pairingHistory[getPairKey(id1, id2)] || 0; }
+
+function recordOpponent(id1, id2) {
+    const key = getPairKey(id1, id2);
+    if (!opponentHistory[key]) opponentHistory[key] = 0;
+    opponentHistory[key]++;
+}
+function getOpponentCount(id1, id2) { return opponentHistory[getPairKey(id1, id2)] || 0; }
+
+async function addPlayers() {
+    const input = document.getElementById('new-players');
+    const rawText = input.value.trim();
+    if (!rawText) return;
+    const names = rawText.split('\n').map(n => n.trim()).filter(n => n);
+    const uniqueNames = [...new Set(names)];
+
+    let maxGamesInSystem = 0;
+    players.forEach(p => {
+        if((p.todayGames || 0) > maxGamesInSystem) maxGamesInSystem = (p.todayGames || 0);
+    });
+
+    for (let name of uniqueNames) {
+        let cleanName = name.replace(/^[\d]+\.[\s]*/, '');
+        if (!cleanName) continue;
+
+        let joinTime = Date.now() + Math.random();
+        let isFastPass = false;
+
+        if (maxGamesInSystem > 2) {
+            joinTime = Date.now() - (60 * 60 * 1000) + Math.random();
+            isFastPass = true;
+        }
+
+        // If this name already went "home early" (removePlayer keeps them around
+        // as status:'left' so today's games/wins aren't lost) and they came back,
+        // rejoin THAT same entry instead of pushing a duplicate row that starts
+        // today's count back at 0.
+        const existingLeft = players.find(pl => pl.name === cleanName && pl.status === 'left');
+        if (existingLeft) {
+            existingLeft.status = 'waiting';
+            existingLeft.joinedQueueAt = joinTime;
+            existingLeft.isFastPass = isFastPass;
+            continue;
+        }
+
+        let profile = {
+            id: Date.now() + Math.random(),
+            name: cleanName,
+            level: 'BG',
+            gender: 'M',
+            gamesPlayed: 0,
+            wins: 0,
+            todayGames: 0,
+            todayWins: 0,
+            status: 'waiting',
+            joinedQueueAt: joinTime,
+            bookingId: null,
+            winStreak: 0,
+            sessionGames: 0,
+            isFastPass: isFastPass,
+            checkInTime: new Date().toISOString(),
+            isResting: false,
+            mmr: 100
+        };
+
+        if (typeof db !== 'undefined') {
+            try {
+                const doc = await db.collection('players_profile').doc(cleanName).get();
+                if (doc.exists) {
+                    const cloudData = doc.data();
+                    profile.level = cloudData.level || 'BG';
+                    profile.avatarUrl = cloudData.avatarUrl || null;
+                    profile.gender = cloudData.gender || 'M';
+                    profile.gamesPlayed = cloudData.gamesPlayed || 0;
+                    profile.wins = cloudData.wins || 0;
+                    profile.mmr = typeof cloudData.mmr !== 'undefined' ? cloudData.mmr : 100;
+                    console.log(`🎯 ดึงโปรไฟล์ ${cleanName} จาก Cloud สำเร็จ`);
+                } else {
+                    await db.collection('players_profile').doc(cleanName).set({
+                        name: cleanName,
+                        level: 'BG',
+                        gender: 'M',
+                        gamesPlayed: 0,
+                        wins: 0,
+                        mmr: 100
+                    });
+                    console.log(`🆕 สร้างโปรไฟล์ใหม่ให้ ${cleanName} ลง Cloud`);
+                }
+            } catch (err) {
+                console.error("Firebase Profile Error:", err);
+            }
+        }
+        players.push(profile);
+    }
+    input.value = '';
+    updateQueueDisplay();
+    triggerSave();
+}
+
+// A player who's already played today has real stats sitting on this object
+// (todayGames/todayWins, and they count toward today's dashboard + daily
+// awards) — a plain delete used to throw all of that away the moment someone
+// removed them from the queue, even if they'd been playing for hours and just
+// went home. For anyone who's actually played, this marks them "left" instead
+// of deleting them, so they quietly drop out of the queue/matchmaking (every
+// candidate filter in the app only looks at status === 'waiting') while their
+// today's stats stay exactly as they were. Someone who was added by mistake
+// and never played (0 games today) still gets fully removed, since there's no
+// stat to protect and no reason to leave a dead row behind.
+const removePlayer = (id) => {
+    const p = players.find(x => x.id === id);
+    if (!p) return;
+    if(p.status === 'playing') { alert('เล่นอยู่ ลบไม่ได้ครับ'); return; }
+
+    const hasPlayedToday = (p.todayGames || 0) > 0;
+
+    if (p.bookingId) {
+        const others = players.filter(x => x.bookingId === p.bookingId && x.id !== id);
+        if (others.length > 0) {
+            if(!confirm(`⚠️ ${p.name} ติดจองอยู่ ลบทั้งกลุ่มไหม?`)) return;
+            players.forEach(x => {
+                if(x.bookingId === p.bookingId) { x.bookingId = null; x.bookingTeam = null; }
+            });
+        }
+    } else if (hasPlayedToday) {
+        if(!confirm(`${p.name} เล่นไปแล้ว ${p.todayGames} เกมวันนี้ — เอาออกจากคิว (สถิติวันนี้จะยังเก็บไว้ ไม่หายไปไหน) ใช่ไหม?`)) return;
+    } else {
+        if(!confirm(`ต้องการลบ ${p.name} ใช่ไหม?`)) return;
+    }
+
+    if (hasPlayedToday) {
+        p.status = 'left';
+        p.isResting = false;
+        p.bookingId = null;
+        p.bookingTeam = null;
+    } else {
+        players = players.filter(p => p.id !== id);
+    }
+    updateQueueDisplay();
+    triggerSave();
+};
+
+function resetStatsOnly() {
+    if(!confirm('รีเซ็ตสถิติ? (สำหรับเริ่มเซสชันใหม่) — จะลบประวัติการแข่งขันของวันนี้ทิ้งด้วย กู้คืนไม่ได้')) return;
+    const pwd = prompt('พิมพ์รหัสผ่านแอดมินเพื่อยืนยัน:');
+    if (pwd === null) return;
+    if (pwd !== 'siberian') { alert('❌ รหัสผ่านผิด ยกเลิกการรีเซ็ต'); return; }
+    players.forEach(p => {
+        p.todayGames = 0;
+        p.todayWins = 0;
+        p.sessionGames = 0;
+
+        p.status = 'waiting';
+        // + Math.random() so a whole batch of players reset at once (as here)
+        // doesn't tie on the exact millisecond — see sendToQueue() for why that matters.
+        p.joinedQueueAt = Date.now() + Math.random();
+        p.bookingId = null;
+        p.isFastPass = false;
+    });
+    pairingHistory = {}; opponentHistory = {}; matchLogs = [];
+    roundCounter = 0; lastTeammateRound = {};
+    renderMatchLog(); resetCourtsState(); updateQueueDisplay();
+}
+
+function resetAll() {
+    if(!confirm('⚠️ ล้างข้อมูลทั้งหมดใช่ไหม?')) return;
+    if(!confirm('⚠️ ยืนยันครั้งที่ 2?')) return;
+    const pwd = prompt('พิมพ์รหัสผ่านแอดมินเพื่อยืนยัน:');
+    if (pwd === null) return;
+    if (pwd !== 'siberian') { alert('❌ รหัสผ่านผิด ยกเลิกการล้างข้อมูล'); return; }
+    players = []; pairingHistory = {}; opponentHistory = {}; matchLogs = [];
+    roundCounter = 0; lastTeammateRound = {};
+    courts.forEach(c => { clearInterval(c.interval); c.players = []; c.state = 'empty'; c.timer = 0; });
+    localStorage.removeItem(STORAGE_KEY);
+    renderMatchLog(); renderCourts(); updateQueueDisplay();
+}
+
+function resetCourtsState() {
+    courts.forEach(c => {
+        clearInterval(c.interval);
+        c.players = []; c.state = 'empty'; c.timer = 0; c.isOpened = false; c.autoStartTarget = null;
+    });
+    renderCourts();
+}
+
+// Stops every court WITHOUT recording a finished game — used when ending the
+// session for the day, since a court still "playing" (or stuck at the
+// "who won?" popup) hasn't actually finished and shouldn't count as a scored
+// match, get MMR changes, or be left marked "playing" in Firebase forever.
+function stopAllCourtsWithoutScoring() {
+    // If the "who won?" popup is open, stopGame() already added this game to
+    // everyone's count in anticipation of picking a winner — undo that first,
+    // the same way "↩ ยกเลิก (กดผิด)" would.
+    if (activeGameResolveCourtId !== null) {
+        const pendingCourt = courts[activeGameResolveCourtId];
+        pendingCourt.players.forEach(p => {
+            const pl = players.find(x => x.id === p.id);
+            if (pl) {
+                pl.gamesPlayed = Math.max(0, pl.gamesPlayed - 1);
+                pl.sessionGames = Math.max(0, pl.sessionGames - 1);
+                pl.todayGames = Math.max(0, (pl.todayGames || 0) - 1);
+            }
+        });
+        const modal = document.getElementById('winner-modal');
+        if (modal) modal.style.display = 'none';
+        activeGameResolveCourtId = null;
+    }
+
+    courts.forEach(c => {
+        clearInterval(c.interval);
+        c.players.forEach(p => { if (p) sendToQueue(p.id); });
+        c.players = [];
+        c.state = 'empty';
+        c.timer = 0;
+        c.gameStartTime = null;
+        c.isOpened = false;
+        c.autoStartTarget = null;
+    });
+    renderCourts();
+}
+
+// Safety net for a court stuck showing an impossible play time (e.g. 200
+// minutes) — either the host genuinely forgot to click "จบเกม" for way too
+// long, or (the more common cause) a previous day's leftover state got
+// loaded back in. Either way, no real match result exists to save, so this
+// just clears the court and returns its players to the queue untouched —
+// same as ending the session early would for a court still mid-game.
+function autoAbortStuckCourt(idx) {
+    const court = courts[idx];
+    clearInterval(court.interval);
+    const names = court.players.filter(Boolean).map(p => p.name);
+    court.players.forEach(p => { if (p) sendToQueue(p.id); });
+    court.players = [];
+    court.state = 'empty';
+    court.timer = 0;
+    court.gameStartTime = null;
+    court.isOpened = false;
+    court.autoStartTarget = null;
+    renderCourts();
+    updateQueueDisplay();
+    if (typeof triggerSave === 'function') triggerSave();
+    if (names.length > 0) {
+        alert(`⚠️ คอร์ท ${idx + 1} เล่นเกินเวลาไปมาก (${names.join(', ')}) น่าจะเป็นเกมที่ค้างจากบั๊กหรือลืมกดจบเกม ระบบเลยยกเลิกเกมนี้อัตโนมัติ (ไม่นับเป็นเกมที่จบ) แล้วส่งทุกคนกลับเข้าคิวให้แล้ว ลองเช็คคอร์ทนี้อีกทีนะ`);
+    }
+}
+
+function updateCourts(change) {
+    const newCount = courtCount + change;
+    if (newCount < 1) return;
+    courtCount = newCount;
+    document.getElementById('court-count').innerText = courtCount;
+    renderCourts();
+}
+
+function setCourtRule(courtIdx, newRule) {
+    courts[courtIdx].rule = newRule;
+    renderCourts();
+    updateQueueDisplay();
+    triggerSave();
+}
+
+function closeCourtRuleMenus() {
+    document.querySelectorAll('.mode-dropdown-menu').forEach(el => el.classList.add('hidden'));
+}
+function toggleCourtRuleMenu(event, courtIdx) {
+    event.stopPropagation();
+    const menu = document.getElementById(`court-rule-menu-${courtIdx}`);
+    const wasOpen = menu && !menu.classList.contains('hidden');
+    closeCourtRuleMenus();
+    if (menu && !wasOpen) menu.classList.remove('hidden');
+}
+window.addEventListener('click', closeCourtRuleMenus);
+function toggleRankFilter(idx) {
+    courts[idx].isRankFilterOn = !courts[idx].isRankFilterOn;
+    renderCourts(); triggerSave();
+}
+
+function setCourtRankMin(idx, val) {
+    courts[idx].minRank = val;
+    renderCourts(); triggerSave();
+}
+
+function setCourtRankMax(idx, val) {
+    courts[idx].maxRank = val;
+    renderCourts(); triggerSave();
+}
+
+// ==========================================
+// 🏟️ Court rendering — UNCHANGED from your original, on purpose.
+// ==========================================
+function renderCourts() {
+    const container = document.getElementById('courts-container');
+    if (courts.length < courtCount) {
+        for (let i = courts.length; i < courtCount; i++) {
+            courts.push({ id: i, players: [], state: 'empty', timer: 0, interval: null, isOpened: false, autoStartTarget: null, rule: 'normal', isRankFilterOn: false, minRank: 'BG', maxRank: 'P' });
+        }
+    } else if (courts.length > courtCount) {
+        const removed = courts.pop();
+        if (removed.players.length > 0) {
+            removed.players.forEach(p => {
+                const pl = players.find(x => x.id === p.id);
+                if(pl) { pl.status = 'waiting'; pl.joinedQueueAt = Date.now() + Math.random(); pl.sessionGames = 0; }
+            });
+        }
+    }
+    container.innerHTML = '';
+    courts.forEach((court, index) => {
+        if (!court.rule) court.rule = 'normal';
+        if (typeof court.isRankFilterOn === 'undefined') court.isRankFilterOn = false;
+        if (!court.minRank) court.minRank = 'BG';
+        if (!court.maxRank) court.maxRank = 'P';
+
+        let overlayHTML = '';
+        if (court.state === 'post_game') {
+            overlayHTML = `<div class="court-overlay"><button class="btn-overlay btn-call" onclick="triggerFill(${index})">📢 เรียกคนลง</button><button class="btn-overlay btn-rest" onclick="closeAndRest(${index})">🔴 พักคอร์ท</button></div>`;
+        } else if (!court.isOpened) {
+            overlayHTML = `<div class="court-overlay"><button class="btn-overlay btn-open" onclick="openCourt(${index})">🔔 เปิดสนาม</button></div>`;
+        }
+        const displayName = court.customName || `#${index + 1}`;
+
+        const rankOptions = RANK_LEVELS.map(r => `<option value="${r}">${r}</option>`).join('');
+        const rankFilterHTML = `
+            <div class="rank-filter-container" onclick="event.stopPropagation()">
+                <input type="checkbox" class="rank-checkbox" ${court.isRankFilterOn ? 'checked' : ''} onchange="toggleRankFilter(${index})" title="บังคับ Rank">
+                <span style="font-weight:bold; color:${court.isRankFilterOn ? '#FF6F91' : '#aaa'};">Rank</span>
+                <select class="rank-select" onchange="setCourtRankMin(${index}, this.value)" ${!court.isRankFilterOn?'disabled':''}>${RANK_LEVELS.map(r => `<option value="${r}" ${court.minRank===r?'selected':''}>${r}</option>`).join('')}</select>
+                to
+                <select class="rank-select" onchange="setCourtRankMax(${index}, this.value)" ${!court.isRankFilterOn?'disabled':''}>${RANK_LEVELS.map(r => `<option value="${r}" ${court.maxRank===r?'selected':''}>${r}</option>`).join('')}</select>
+            </div>
+        `;
+
+        const ruleSelectHTML = `
+            <div class="mode-dropdown" onclick="event.stopPropagation()">
+                <button class="mode-dropdown-btn" onclick="toggleCourtRuleMenu(event, ${index})" title="โหมดการเล่น: คลิกเพื่อสลับ">
+                    ${court.rule === 'winner_stay' ? '👑' : '⛔'} <span class="mode-dropdown-caret">▾</span>
+                </button>
+                <div class="mode-dropdown-menu hidden" id="court-rule-menu-${index}">
+                    <button class="${court.rule === 'normal' ? 'active' : ''}" onclick="setCourtRule(${index}, 'normal'); closeCourtRuleMenus();">⛔ ออกหมด</button>
+                    <button class="${court.rule === 'winner_stay' ? 'active' : ''}" onclick="setCourtRule(${index}, 'winner_stay'); closeCourtRuleMenus();">👑 ครบ 2 เด้ง</button>
+                </div>
+            </div>`;
+
+        container.innerHTML += `
+            <div class="court ${court.state === 'playing' ? 'is-playing' : ''}" id="court-${index}">
+              <div class="court-header">
+                <span onclick="editCourtName(${index})" style="cursor:pointer; white-space:nowrap;">${displayName} ✏️</span>
+                ${rankFilterHTML}
+                ${ruleSelectHTML}
+              </div>
+
+              <div class="court-surface" style="position: relative;">
+                <div class="court-net"></div>
+                <div class="court-vs-badge">VS</div>
+                <div class="team team-pink">${renderPlayerOnCourt(court.players[0], index, 0)}${renderPlayerOnCourt(court.players[1], index, 1)}</div>
+                <div class="team team-blue">${renderPlayerOnCourt(court.players[2], index, 2)}${renderPlayerOnCourt(court.players[3], index, 3)}</div>
+                ${overlayHTML}
+              </div>
+
+              <div class="court-footer">
+                <div class="timer" id="timer-${index}">${formatTime(court.timer)}</div>${renderCourtButtons(court, index)}
+              </div>
+            </div>`;
+    });
+    updateQueueDisplay();
+    updateDashboard();
+    updateHeaderStats();
+}
+
+function updateHeaderStats() {
+    const courtStatusEl = document.getElementById('header-court-status');
+    const queueCountEl = document.getElementById('header-queue-count');
+    const completedCountEl = document.getElementById('header-completed-count');
+    if (!courtStatusEl) return;
+    const activeCourts = courts.filter(c => c.state === 'playing').length;
+    courtStatusEl.innerText = `${activeCourts} กำลังแข่ง / ${courts.length} คอร์ททั้งหมด`;
+    queueCountEl.innerText = `${players.filter(p => p.status === 'waiting').length} คน`;
+    completedCountEl.innerText = `${matchLogs.length} แมตช์`;
+}
+
+function openCourt(idx) { courts[idx].isOpened = true; renderCourts(); }
+function triggerFill(idx) { courts[idx].state = 'empty'; renderCourts(); }
+function closeAndRest(idx) {
+    courts[idx].players.forEach(p => sendToQueue(p.id));
+    courts[idx].players = []; courts[idx].state = 'empty'; courts[idx].isOpened = false; courts[idx].timer = 0;
+    renderCourts();
+}
+
+function renderPlayerOnCourt(player, courtIdx, slotIdx) {
+    if (!player) return `<div class="court-slot empty" onclick="openManualAddModal(${courtIdx})" title="จิ้มเพื่อเลือกคนลง">+ ว่าง</div>`;
+
+    const pl = players.find(x => x.id === player.id) || player;
+
+    const rule = courts[courtIdx].rule || 'normal';
+    let badge = (rule === 'winner_stay') ? `<span class="quota-badge" style="background:${pl.sessionGames >= 1 ? '#FF9F5C' : '#4FCB8D'}">G: ${pl.sessionGames + 1}/2</span>` : '';
+    const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(pl.name)}&background=random&color=fff`;
+    const avatarImg = pl.avatarUrl ? pl.avatarUrl : defaultAvatar;
+
+    const nameDisplay = pl.gender === 'F' ? `<span class="lady-name">🌸 ${sanitizeHTML(pl.name)}</span>` : sanitizeHTML(pl.name);
+    return `<div class="player-on-court court-slot" title="เปลี่ยนตัว" onclick="kickPlayer(${courtIdx}, ${slotIdx})">
+        <div class="court-slot-avatar"><img src="${avatarImg}"></div>
+        <div class="court-slot-info">
+            <div class="court-slot-name">${nameDisplay}</div>
+            <div class="court-slot-meta"><span>${pl.todayGames || 0}P</span>${badge}</div>
+        </div>
+    </div>`;
+}
+
+function renderCourtButtons(court, idx) {
+    if (!court.isOpened || court.state === 'post_game') return `<button class="secondary" style="width:100%;" disabled>...</button>`;
+    if (court.state === 'playing') return `<button class="danger" style="width:100%;" onclick="stopGame(${idx})">จบเกม</button>`;
+
+    const realCount = countRealPlayers(court);
+    if (realCount === 4) {
+        if (court.autoStartTarget) {
+            const remaining = Math.ceil((court.autoStartTarget - Date.now()) / 1000);
+            if (remaining > 0) return `<button class="success btn-auto-start" style="width:100%;" onclick="startGame(${idx})">เริ่ม (Auto ${remaining}s)</button>`;
+        }
+        return `<button class="success" style="width:100%;" onclick="startGame(${idx})">เริ่มเกม</button>`;
+    }
+    return `
+        <div style="display:flex; gap:4px; margin-top:2px;">
+            <button class="secondary" style="flex:1; font-size:0.85em; padding:6px;" onclick="fillCourtSmart(${idx})">🎲 สุ่ม</button>
+            <button class="dark" style="flex:1; font-size:0.85em; padding:6px;" onclick="fillCourtQueue(${idx})">⏩ ตามคิว</button>
+        </div>`;
+}
+
+const autoFillCourts = () => {
+    courts.forEach((court, idx) => {
+        if (!court.isOpened || court.state === 'playing' || court.state === 'post_game') return;
+        if (countRealPlayers(court) === 4) {
+            if (!court.autoStartTarget) {
+                court.autoStartTarget = Date.now() + (AUTO_START_DELAY * 1000);
+                renderCourts();
+            } else if (Date.now() >= court.autoStartTarget) {
+                startGame(idx);
+            } else {
+                const btn = document.querySelector(`#court-${idx} .btn-auto-start`);
+                if (btn) btn.innerHTML = `เริ่ม (Auto ${Math.ceil((court.autoStartTarget - Date.now()) / 1000)}s)`;
+            }
+        } else {
+             court.autoStartTarget = null;
+        }
+    });
+};
+
+// ==========================================
+// 🎲 Smart fill — now cooldown-aware for All-Out mode
+// ==========================================
+const fillCourtSmart = (courtIdx) => {
+    const court = courts[courtIdx];
+    const existingPlayers = court.players.filter(p => p !== null && p !== undefined);
+    const needed = 4 - existingPlayers.length;
+    const waiting = players.filter(p => p.status === 'waiting' && !p.isResting && !p.bookingId).sort((a, b) => a.joinedQueueAt - b.joinedQueueAt);
+    const headOfQueue = waiting.length > 0 ? waiting[0] : null;
+    const allWaitingCount = players.filter(p => p.status === 'waiting' && !p.isResting).length;
+
+    let rankFilter = null;
+    if (court.isRankFilterOn) {
+        rankFilter = { min: court.minRank || 'BG', max: court.maxRank || 'P' };
+    }
+
+    // Cooldown logic only applies to All-Out mode filling a fully empty court
+    const useCooldown = (court.rule !== 'winner_stay' && needed === 4 && existingPlayers.length === 0);
+
+    // A booked pair/group sitting far back in the queue shouldn't get pulled
+    // in early just because they happen to be booked — only let a random fill
+    // consider them if the whole group is near the front of the queue.
+    const farBookingIds = getFarBookingIds();
+
+    // Captured BEFORE the draft runs, since getSmartDraft's anti-starvation
+    // branch (skipCount / MAX_FAIR_WAIT_MS) checks these same conditions —
+    // used below to make sure a forced pick never gets stuck behind a
+    // cooldown confirmation popup that silently stalls if nobody answers it.
+    const headNeededForce = !!(headOfQueue && (
+        (headOfQueue.skipCount || 0) >= 1 ||
+        (Date.now() - (headOfQueue.joinedQueueAt || Date.now())) >= MAX_FAIR_WAIT_MS
+    ));
+
+    let candidates = getSmartDraft(needed, farBookingIds, existingPlayers, false, rankFilter, useCooldown);
+    if (candidates.length === 0) candidates = getSmartDraft(needed, farBookingIds, existingPlayers, true, rankFilter, useCooldown);
+    // If excluding far bookings leaves nobody eligible at all, fall back to
+    // allowing them rather than blocking the court from filling.
+    if (candidates.length === 0) candidates = getSmartDraft(needed, new Set(), existingPlayers, false, rankFilter, useCooldown);
+    if (candidates.length === 0) candidates = getSmartDraft(needed, new Set(), existingPlayers, true, rankFilter, useCooldown);
+
+    if (candidates.length === 0) {
+        alert('❌ คนในคิว (ที่ตรงตามเงื่อนไข Rank) ไม่พอครับ');
+        return;
+    }
+
+    if (candidates.length === 4) candidates = autoBalanceTeam(candidates);
+
+    // Anti-starvation skip tracking for the head of queue
+    if (headOfQueue) {
+        const isHeadPicked = candidates.some(c => c.id === headOfQueue.id);
+        if (!isHeadPicked) {
+            if (!headOfQueue._unresolvedSkip) {
+                headOfQueue.skipCount = (headOfQueue.skipCount || 0) + 1;
+            }
+        } else {
+            headOfQueue.skipCount = 0;
+        }
+        headOfQueue._unresolvedSkip = false;
+    }
+
+    // A booked pair/group made it into the draft — ask before seating them,
+    // since the host might want to reroll for someone else instead. (Booking
+    // confirmation is a separate concern from the cooldown one below, so this
+    // still applies even to a starvation-forced pick.)
+    if (candidates.some(p => p.bookingId)) {
+        showBookingConfirm(courtIdx, candidates, needed, rankFilter, useCooldown, allWaitingCount);
+        return;
+    }
+
+    // A forced pick already means "seat this person no matter what" — pausing
+    // it on an unanswered cooldown popup would silently defeat the whole
+    // point of forcing it, and cost them exactly the extra wait this was
+    // supposed to prevent.
+    const wasStarvationOverride = headNeededForce && candidates.some(c => c.id === headOfQueue.id);
+
+    finishSmartFill(courtIdx, candidates, useCooldown, allWaitingCount, wasStarvationOverride);
+};
+
+function finishSmartFill(courtIdx, candidates, useCooldown, waitingCount, skipCooldownConfirm = false) {
+    if (useCooldown && !skipCooldownConfirm) {
+        const violations = getCooldownViolations(candidates);
+        // Only ask for confirmation if there WAS another option — with exactly
+        // as many people waiting as needed, there's no alternative combination anyway.
+        if (violations.length > 0 && waitingCount > candidates.length) {
+            showCooldownConfirm(courtIdx, candidates, violations);
+            return; // wait for the user's Yes/No
+        }
+    }
+    assignTeamToCourt(courtIdx, candidates);
+}
+
+// A booked pair/group only counts as "ready" for a random fill if EVERY
+// member is already within the front `frontLimit` spots of the queue —
+// otherwise a booking made far back in line would unfairly jump the queue.
+function getFarBookingIds(frontLimit = 4) {
+    const orderedWaiting = players.filter(p => p.status === 'waiting' && !p.isResting).sort((a, b) => a.joinedQueueAt - b.joinedQueueAt);
+    const groupMaxPos = {};
+    orderedWaiting.forEach((p, i) => {
+        if (p.bookingId) groupMaxPos[p.bookingId] = Math.max(groupMaxPos[p.bookingId] || 0, i + 1);
+    });
+    const farIds = new Set();
+    orderedWaiting.forEach(p => {
+        if (p.bookingId && groupMaxPos[p.bookingId] > frontLimit) farIds.add(p.id);
+    });
+    return farIds;
+}
+
+let pendingBookingChoice = null;
+
+function showBookingConfirm(courtIdx, team, needed, rankFilter, useCooldown, waitingCount) {
+    pendingBookingChoice = { courtIdx, team, needed, rankFilter, useCooldown, waitingCount };
+    const bookingId = team.find(p => p.bookingId).bookingId;
+    const groupNames = team.filter(p => p.bookingId === bookingId).map(p => sanitizeHTML(p.name)).join(' + ');
+
+    let overlay = document.getElementById('booking-confirm-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'booking-confirm-overlay';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(15,23,42,0.6);z-index:2000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+        document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+        <div style="background:white;padding:22px;border-radius:16px;width:340px;max-width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+            <h3 style="margin:0 0 10px;color:#0f172a;">🔒 มีคนจองคิวไว้ในคอมโบนี้</h3>
+            <p style="font-size:0.9em;color:#555;"><strong>${groupNames}</strong> จองคิวไว้ด้วยกันและสุ่มมาโดนพอดี ต้องการให้ลงคอร์ทนี้เลยไหม หรือสุ่มใหม่โดยเว้นคู่นี้ไว้ก่อน (พวกเขายังอยู่ในคิวรอตามเดิม)?</p>
+            <div style="display:flex;gap:8px;margin-top:14px;">
+                <button onclick="resolveBookingConfirm('reroll')" style="flex:1;padding:10px;border-radius:10px;border:none;background:#e2e8f0;color:#334155;cursor:pointer;">🔁 สุ่มใหม่</button>
+                <button onclick="resolveBookingConfirm('assign')" style="flex:1;padding:10px;border-radius:10px;border:none;background:#4FCB8D;color:white;cursor:pointer;">✅ ลงเลย</button>
+            </div>
+        </div>`;
+    overlay.style.display = 'flex';
+}
+
+function resolveBookingConfirm(choice) {
+    const overlay = document.getElementById('booking-confirm-overlay');
+    if (overlay) overlay.style.display = 'none';
+    if (!pendingBookingChoice) return;
+    const { courtIdx, team, needed, rankFilter, useCooldown, waitingCount } = pendingBookingChoice;
+    pendingBookingChoice = null;
+
+    if (choice === 'assign') {
+        finishSmartFill(courtIdx, team, useCooldown, waitingCount);
+        return;
+    }
+
+    // Reroll: exclude everyone in that booking group and draw again — they
+    // stay in the queue untouched for next time.
+    const bookingId = team.find(p => p.bookingId).bookingId;
+    const excludeIds = new Set(players.filter(p => p.bookingId === bookingId).map(p => p.id));
+    const court = courts[courtIdx];
+    const existingPlayers = court.players.filter(p => p !== null && p !== undefined);
+    let retry = getSmartDraft(needed, excludeIds, existingPlayers, false, rankFilter, useCooldown);
+    if (retry.length === 0) retry = getSmartDraft(needed, excludeIds, existingPlayers, true, rankFilter, useCooldown);
+    if (retry.length === 0) {
+        alert('❌ คนในคิว (ไม่รวมคู่ที่จองไว้) ไม่พอครับ');
+        return;
+    }
+    if (retry.length === 4) retry = autoBalanceTeam(retry);
+
+    if (retry.some(p => p.bookingId)) {
+        showBookingConfirm(courtIdx, retry, needed, rankFilter, useCooldown, waitingCount);
+    } else {
+        finishSmartFill(courtIdx, retry, useCooldown, waitingCount);
+    }
+}
+
+function assignTeamToCourt(courtIdx, candidates) {
+    const court = courts[courtIdx];
+    candidates.forEach(p => {
+        p.status = 'playing'; p.sessionGames = 0;
+        if (p.isFastPass) p.isFastPass = false;
+        p.bookingId = null; p.bookingTeam = null;
+        addPlayerToCourt(court, p);
+    });
+    renderCourts();
+    triggerSave();
+}
+
+let pendingCooldownTeam = null;
+
+function showCooldownConfirm(courtIdx, team, violations) {
+    pendingCooldownTeam = { courtIdx, team };
+    const t1 = [team[0], team[1]];
+    const t2 = [team[2], team[3]];
+
+    const seen = new Set();
+    let msgLines = [];
+    violations.forEach(v => {
+        const key = v.a.id < v.b.id ? `${v.a.id}-${v.b.id}` : `${v.b.id}-${v.a.id}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        const pc = getPairCount(v.a.id, v.b.id);
+        const oc = getOpponentCount(v.a.id, v.b.id);
+        msgLines.push(`${sanitizeHTML(v.a.name)} เจอกับ ${sanitizeHTML(v.b.name)}: จับคู่มาแล้ว ${pc} ครั้ง, เจอกันเป็นคู่แข่ง ${oc} ครั้ง`);
+    });
+
+    let overlay = document.getElementById('cooldown-confirm-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'cooldown-confirm-overlay';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+        document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+        <div style="background:white;padding:22px;border-radius:16px;width:340px;max-width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+            <h3 style="margin:0 0 10px;color:#2c3e50;">⚠️ หาคอมโบที่เลี่ยงคนหน้าเดิมไม่ได้ครบ</h3>
+            <p style="font-size:0.85em;color:#555;">${msgLines.join('<br>')}</p>
+            <div style="display:flex;gap:8px;margin:14px 0;">
+                <div style="flex:1;background:#ffebee;border-radius:8px;padding:8px;text-align:center;">
+                    <div style="font-weight:bold;color:#FF6F91;">${sanitizeHTML(t1[0].name)}</div>
+                    <div style="font-weight:bold;color:#FF6F91;">${sanitizeHTML(t1[1].name)}</div>
+                </div>
+                <div style="align-self:center;font-weight:bold;">VS</div>
+                <div style="flex:1;background:#e3f2fd;border-radius:8px;padding:8px;text-align:center;">
+                    <div style="font-weight:bold;color:#4FB3F0;">${sanitizeHTML(t2[0].name)}</div>
+                    <div style="font-weight:bold;color:#4FB3F0;">${sanitizeHTML(t2[1].name)}</div>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <button onclick="resolveCooldownConfirm(false)" style="flex:1;padding:10px;border-radius:8px;border:none;background:#e0e0e0;cursor:pointer;">❌ No</button>
+                <button onclick="resolveCooldownConfirm(true)" style="flex:1;padding:10px;border-radius:8px;border:none;background:#4FCB8D;color:white;cursor:pointer;">✅ Yes</button>
+            </div>
+        </div>`;
+    overlay.style.display = 'flex';
+}
+
+function resolveCooldownConfirm(accepted) {
+    const overlay = document.getElementById('cooldown-confirm-overlay');
+    if (overlay) overlay.style.display = 'none';
+    if (!pendingCooldownTeam) return;
+    const { courtIdx, team } = pendingCooldownTeam;
+    pendingCooldownTeam = null;
+    if (accepted) {
+        assignTeamToCourt(courtIdx, team);
+    }
+    // "No" does nothing to player state — they were never removed from the
+    // queue, so they stay exactly where they were (top of queue).
+    renderCourts(); updateQueueDisplay();
+}
+
+const fillCourtQueue = (courtIdx) => {
+    const court = courts[courtIdx];
+    const needed = 4 - countRealPlayers(court);
+    const waiting = players.filter(p => p.status === 'waiting'&& !p.isResting).sort((a, b) => a.joinedQueueAt - b.joinedQueueAt);
+
+    if (waiting.length === 0) { alert('ไม่มีคนรอคิวครับ'); return; }
+    const firstP = waiting[0];
+    let candidates = [];
+
+    if (firstP.bookingId) {
+        const group = waiting.filter(p => p.bookingId === firstP.bookingId);
+        group.sort((a, b) => (a.bookingTeam || 0) - (b.bookingTeam || 0));
+        if (group.length > needed) { alert(`⚠️ ลงไม่ได้! ติด Booking`); return; }
+        candidates = group;
+    } else {
+        for (let i = 0; i < waiting.length; i++) {
+            if (candidates.length >= needed) break;
+            const p = waiting[i];
+            if (p.bookingId) break;
+            candidates.push(p);
+        }
+    }
+
+    if (candidates.length > 0) {
+        if (candidates.length === 4) candidates = autoBalanceTeam(candidates);
+        candidates.forEach(p => {
+            p.status = 'playing'; p.sessionGames = 0;
+            if(p.isFastPass) p.isFastPass = false;
+            addPlayerToCourt(court, p);
+        });
+        renderCourts();
+    }
+};
+
+
+function startGame(courtIdx) {
+    const court = courts[courtIdx];
+    court.state = 'playing'; court.gameStartTime = Date.now(); court.timer = 0; court.autoStartTarget = null;
+
+    // Snapshot of anyone excluded from THIS draft for a legitimate reason
+    // (resting, booked elsewhere, or outside this court's rank filter) —
+    // carried through to the match log so the History timeline can tell a
+    // real "skip" apart from someone who was never actually eligible.
+    court.draftContext = {
+        restingNames: players.filter(p => p.isResting).map(p => p.name),
+        bookedNames: players.filter(p => p.bookingId).map(p => p.name),
+        rankFilterOn: !!court.isRankFilterOn,
+        rankMin: court.isRankFilterOn ? (court.minRank || null) : null,
+        rankMax: court.isRankFilterOn ? (court.maxRank || null) : null,
+    };
+
+    if(court.players[0] && court.players[1]) recordPairing(court.players[0].id, court.players[1].id);
+    if(court.players[2] && court.players[3]) recordPairing(court.players[2].id, court.players[3].id);
+    const p0 = court.players[0]; const p1 = court.players[1];
+    const p2 = court.players[2]; const p3 = court.players[3];
+    if (p0 && p2) recordOpponent(p0.id, p2.id); if (p0 && p3) recordOpponent(p0.id, p3.id);
+    if (p1 && p2) recordOpponent(p1.id, p2.id); if (p1 && p3) recordOpponent(p1.id, p3.id);
+
+    // 🔄 Cooldown tracking — only meaningful for All-Out mode
+    if (court.rule !== 'winner_stay') {
+        roundCounter++;
+        if (p0 && p1) lastTeammateRound[getPairKey(p0.id, p1.id)] = roundCounter;
+        if (p2 && p3) lastTeammateRound[getPairKey(p2.id, p3.id)] = roundCounter;
+    }
+
+    renderCourts(); triggerSave();
+}
+
+function stopGame(courtIdx) {
+    const court = courts[courtIdx]; clearInterval(court.interval);
+    court.players.forEach(p => { const pl = players.find(x => x.id === p.id);
+                                if(pl) {    pl.gamesPlayed++;
+                                            pl.sessionGames++;
+                                            pl.todayGames = (pl.todayGames || 0) + 1;} });
+    activeGameResolveCourtId = courtIdx;
+    openFinishMatchModal(courtIdx);
+}
+
+let pendingMatchWinner = null;
+let pendingMatchScores = null;
+const SCORE_WHEEL_MAX = 30;
+const SCORE_WHEEL_ITEM_H = 40;
+// Tracks whether each team's score has actually been set this round (by
+// scrolling, tapping +/-, or the winner button's 21 default) — submitting
+// is blocked until both are touched, so a losing score can never silently
+// default to 0 just because nobody scrolled it.
+let scoreTouched = [false, false];
+let scoreWheelProgrammatic = [false, false];
+let scoreScrollTimers = [null, null];
+
+function buildScoreWheel(teamIdx) {
+    const wheel = document.getElementById(`score-wheel-${teamIdx}`);
+    let html = '<div class="score-wheel-pad"></div>';
+    for (let n = 0; n <= SCORE_WHEEL_MAX; n++) {
+        html += `<div class="score-wheel-item" data-value="${n}">${n}</div>`;
+    }
+    html += '<div class="score-wheel-pad"></div>';
+    wheel.innerHTML = html;
+    wheel.onscroll = () => onScoreWheelScroll(teamIdx);
+}
+
+function setWheelValue(teamIdx, value, touched) {
+    value = Math.max(0, Math.min(SCORE_WHEEL_MAX, value));
+    const wheel = document.getElementById(`score-wheel-${teamIdx}`);
+    scoreWheelProgrammatic[teamIdx] = true;
+    wheel.scrollTop = value * SCORE_WHEEL_ITEM_H;
+    highlightWheelCenter(teamIdx, value);
+    if (touched) markScoreTouched(teamIdx);
+    setTimeout(() => { scoreWheelProgrammatic[teamIdx] = false; }, 50);
+}
+
+function getWheelValue(teamIdx) {
+    const wheel = document.getElementById(`score-wheel-${teamIdx}`);
+    return Math.max(0, Math.min(SCORE_WHEEL_MAX, Math.round(wheel.scrollTop / SCORE_WHEEL_ITEM_H)));
+}
+
+function highlightWheelCenter(teamIdx, value) {
+    const wheel = document.getElementById(`score-wheel-${teamIdx}`);
+    wheel.querySelectorAll('.score-wheel-item').forEach(el => {
+        el.classList.toggle('is-center', parseInt(el.dataset.value, 10) === value);
+    });
+}
+
+function markScoreTouched(teamIdx) {
+    if (scoreTouched[teamIdx]) return;
+    scoreTouched[teamIdx] = true;
+    const hint = document.getElementById(`score-hint-${teamIdx}`);
+    if (hint) hint.classList.add('hidden-hint');
+}
+
+function onScoreWheelScroll(teamIdx) {
+    const value = getWheelValue(teamIdx);
+    highlightWheelCenter(teamIdx, value);
+    if (!scoreWheelProgrammatic[teamIdx]) markScoreTouched(teamIdx);
+    clearTimeout(scoreScrollTimers[teamIdx]);
+    scoreScrollTimers[teamIdx] = setTimeout(() => {
+        onMatchScoreInput();
+    }, 120);
+}
+
+function stepScore(teamIdx, delta) {
+    setWheelValue(teamIdx, getWheelValue(teamIdx) + delta, true);
+    onMatchScoreInput();
+}
+
+function openFinishMatchModal(courtIdx) {
+    const court = courts[courtIdx];
+    const ruleLabel = (court.rule === 'winner_stay') ? 'ครบ 2 เด้ง' : 'ออกหมด';
+    const courtLabelEl = document.getElementById('finish-modal-court-label');
+    if (courtLabelEl) courtLabelEl.innerText = `${court.customName || ('#' + (courtIdx + 1))} (โหมด: ${ruleLabel})`;
+
+    const nameList = (from, to) => court.players.slice(from, to).filter(Boolean).map(p => sanitizeHTML(p.name)).join(' + ') || '-';
+    document.getElementById('finish-team-names-0').innerText = nameList(0, 2);
+    document.getElementById('finish-team-names-1').innerText = nameList(2, 4);
+
+    buildScoreWheel(0);
+    buildScoreWheel(1);
+    scoreTouched = [false, false];
+    document.getElementById('score-hint-0').classList.remove('hidden-hint');
+    document.getElementById('score-hint-1').classList.remove('hidden-hint');
+    setWheelValue(0, 0, false);
+    setWheelValue(1, 0, false);
+    pendingMatchWinner = null;
+    updateWinnerButtons();
+
+    document.getElementById('winner-modal').style.display = 'flex';
+}
+
+function onMatchScoreInput() {
+    const a = getWheelValue(0);
+    const b = getWheelValue(1);
+    if (a > b) pendingMatchWinner = 0;
+    else if (b > a) pendingMatchWinner = 1;
+    else pendingMatchWinner = null;
+    updateWinnerButtons();
+}
+
+// Tapping "ทีม X ชนะ" scrolls that team's wheel to the standard 21 points as
+// a starting point — the host can still bump it up (e.g. 23-21) before
+// saving. It only marks THIS team's score as set; the other side still
+// needs its own scroll/tap before the result can be saved.
+function setMatchWinner(teamIdx) {
+    pendingMatchWinner = teamIdx;
+    setWheelValue(teamIdx, 21, true);
+    updateWinnerButtons();
+}
+
+function updateWinnerButtons() {
+    const btn0 = document.getElementById('finish-winner-btn-0');
+    const btn1 = document.getElementById('finish-winner-btn-1');
+    if (btn0) btn0.classList.toggle('is-winner', pendingMatchWinner === 0);
+    if (btn1) btn1.classList.toggle('is-winner', pendingMatchWinner === 1);
+}
+
+function submitMatchResult() {
+    if (!scoreTouched[0] || !scoreTouched[1]) {
+        alert('กรุณาเลื่อน (หรือกด +/-) ใส่คะแนนของทั้งสองทีมก่อนครับ — ทีมที่แพ้ก็ต้องใส่ด้วยนะ');
+        return;
+    }
+    if (pendingMatchWinner === null) { alert('คะแนนเท่ากัน กรุณาปรับคะแนนหรือกดเลือกทีมที่ชนะก่อนครับ'); return; }
+    // Read the wheel values now, while the modal (and its scroll position)
+    // is still visible — a hidden element's scrollTop reads back as 0.
+    pendingMatchScores = [getWheelValue(0), getWheelValue(1)];
+    resolveGame(pendingMatchWinner);
+}
+
+function cancelStopGame() {
+    const court = courts[activeGameResolveCourtId];
+    court.players.forEach(p => { const pl = players.find(x => x.id === p.id);
+                                if(pl) {pl.gamesPlayed--;
+                                        pl.sessionGames--;
+                                        pl.todayGames = Math.max(0, (pl.todayGames || 0) - 1);} });
+    court.interval = setInterval(() => { court.timer++; document.getElementById(`timer-${activeGameResolveCourtId}`).innerText = formatTime(court.timer); }, 1000);
+    document.getElementById('winner-modal').style.display = 'none'; activeGameResolveCourtId = null; renderCourts();
+}
+
+function resolveGame(winningTeamIdx) {
+    const court = courts[activeGameResolveCourtId];
+    document.getElementById('winner-modal').style.display = 'none';
+
+    if (winningTeamIdx === -1) {
+        court.players.forEach(p => sendToQueue(p.id));
+        court.players = []; court.state = 'post_game';
+    } else {
+        const t1 = [court.players[0], court.players[1]];
+        const t2 = [court.players[2], court.players[3]];
+        let winners = (winningTeamIdx === 0) ? t1 : t2;
+        let losers = (winningTeamIdx === 0) ? t2 : t1;
+
+        if (court.gameStartTime) {
+            const durationMs = Date.now() - court.gameStartTime;
+            const durationMins = Math.round(durationMs / 60000);
+            if (durationMins >= 2) {
+                completedGameTimes.push(durationMins);
+                if (completedGameTimes.length > 5) completedGameTimes.shift();
+            }
+        }
+
+        const [score0, score1] = pendingMatchScores || [null, null];
+        const scoreWin = winningTeamIdx === 0 ? score0 : score1;
+        const scoreLose = winningTeamIdx === 0 ? score1 : score0;
+
+        const draftContext = court.draftContext || {};
+        const newLog = {
+            time: new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}),
+            court: activeGameResolveCourtId+1,
+            winners: winners.map(p=>sanitizeHTML(p.name)).join(', '),
+            losers: losers.map(p=>sanitizeHTML(p.name)).join(', '),
+            duration: formatTime(court.timer),
+            scoreWin: scoreWin,
+            scoreLose: scoreLose,
+            restingNames: draftContext.restingNames || [],
+            bookedNames: draftContext.bookedNames || [],
+            rankFilterOn: draftContext.rankFilterOn || false,
+            rankMin: draftContext.rankMin || null,
+            rankMax: draftContext.rankMax || null,
+        };
+        matchLogs.unshift(newLog);
+
+        court.gameStartTime = null;
+        renderMatchLog();
+       // -----------------------------------------
+        // ⚖️ ระบบคำนวณแต้ม MMR แบบ Elo Rating
+        // -----------------------------------------
+        const getAvgMMR = (team) => {
+            if (team.length === 0) return 100;
+            let sum = 0, count = 0;
+            team.forEach(p => {
+                const pl = players.find(x => x.id === p.id);
+                if(pl) { sum += (pl.mmr !== undefined ? pl.mmr : 100); count++; }
+            });
+            return count > 0 ? sum / count : 100;
+        };
+
+        const t1AvgMMR = getAvgMMR(t1);
+        const t2AvgMMR = getAvgMMR(t2);
+
+        const K = 40;
+        const winnerAvgMMR = (winningTeamIdx === 0) ? t1AvgMMR : t2AvgMMR;
+        const loserAvgMMR = (winningTeamIdx === 0) ? t2AvgMMR : t1AvgMMR;
+
+        const expectedWinProb = 1 / (1 + Math.pow(10, (loserAvgMMR - winnerAvgMMR) / 400));
+
+       let mmrChange = Math.round(K * (1 - expectedWinProb));
+        const winnerGain = Math.max(5, mmrChange);
+        const loserDrop = mmrChange;
+
+        console.log(`⚖️ [Elo] ชนะได้: +${winnerGain} | แพ้เสีย: -${loserDrop}`);
+
+        winners.forEach(p => {
+            const pl = players.find(x => x.id === p.id);
+            if(pl) {
+                pl.wins++; pl.winStreak = (pl.winStreak || 0) + 1; pl.todayWins = (pl.todayWins || 0) + 1;
+                pl.mmr = (pl.mmr !== undefined ? pl.mmr : 100) + winnerGain;
+                savePlayerProfileToCloud(pl);
+            }
+        });
+
+        losers.forEach(p => {
+            const pl = players.find(x => x.id === p.id);
+            if(pl) {
+                pl.winStreak = 0;
+                pl.mmr = (pl.mmr !== undefined ? pl.mmr : 100) - loserDrop;
+                if (pl.mmr < 0) pl.mmr = 0;
+                savePlayerProfileToCloud(pl);
+            }
+        });
+        // -----------------------------------------
+
+        let stayers = [], leavers = [];
+        const rule = court.rule || 'normal';
+
+        if (rule === 'normal') {
+            leavers.push(...t1, ...t2);
+        } else if (rule === 'winner_stay') {
+            const hasVeteran = court.players.some(p => {
+                const pl = players.find(x => x.id === p.id);
+                return pl && pl.sessionGames >= 2;
+            });
+
+            if (!hasVeteran) {
+                if (winningTeamIdx === 0) {
+                    stayers.push(...t1); leavers.push(...t2);
+                } else {
+                    stayers.push(...t2); leavers.push(...t1);
+                }
+            } else {
+                court.players.forEach(p => {
+                    const pl = players.find(x => x.id === p.id);
+                    if (pl && pl.sessionGames >= 2) {
+                        leavers.push(p);
+                    } else {
+                        stayers.push(p);
+                    }
+                });
+            }
+        }
+        leavers.forEach(p => sendToQueue(p.id));
+        court.players = [...stayers];
+        court.state = 'post_game';
+    }
+    court.timer = 0;
+    renderCourts();
+    triggerSave();
+}
+
+function sendToQueue(playerId) {
+  const pl = players.find(x => x.id === playerId);
+   // + Math.random(): all 4 players from one finished match call this within the
+   // same millisecond, so without a tiebreaker they'd sort back into the queue in a
+   // fixed, repeatable order (favoring whoever was added to the room earliest)
+   // instead of a fair, effectively-random order among themselves.
+   if(pl) { pl.status = 'waiting'; pl.joinedQueueAt = Date.now() + Math.random(); pl.sessionGames = 0; pl.lastFinishedAt = Date.now(); }
+}
+
+const kickPlayer = (courtIdx, slotIdx) => {
+    const court = courts[courtIdx]; const player = court.players[slotIdx];
+    if (!player) return;
+    if (!confirm(`ต้องการเปลี่ยนตัว ${player.name} ออกใช่ไหม?`)) return;
+    sendToQueue(player.id);
+    court.players[slotIdx] = null;
+    if (court.state === 'playing') { clearInterval(court.interval); court.state = 'empty'; }
+    court.autoStartTarget = null;
+    renderCourts();
+};
+
+function renderMatchLog() {
+    const tbody = document.getElementById('match-log-body');
+    if (matchLogs.length === 0) { tbody.innerHTML = '<tr><td colspan="6" style="color:gray;">-</td></tr>'; return; }
+    tbody.innerHTML = matchLogs.map(log => {
+        const scoreText = (log.scoreWin !== undefined && log.scoreWin !== null) ? `${log.scoreWin}-${log.scoreLose}` : '-';
+        return `<tr><td>${log.time}</td><td>${log.court}</td><td class="log-winner">${log.winners}</td><td class="log-loser">${log.losers}</td><td style="font-weight:bold;">${scoreText}</td><td>${log.duration}</td></tr>`;
+    }).join('');
+}
+
+function updateDashboard() {
+    const tbody = document.getElementById('stats-body');
+    const sortType = document.getElementById('sort-select').value;
+    const scope = document.getElementById('scope-select') ? document.getElementById('scope-select').value : 'today';
+
+    let sorted = [...players].sort((a, b) => {
+        let valA = 0;
+        let valB = 0;
+
+        if (scope === 'today') {
+            if (sortType === 'games_desc' || sortType === 'games_asc') {
+                valA = a.todayGames || 0; valB = b.todayGames || 0;
+            } else if (sortType === 'wins_desc') {
+                valA = a.todayWins || 0; valB = b.todayWins || 0;
+            }
+        } else {
+            if (sortType === 'games_desc' || sortType === 'games_asc') {
+                valA = a.gamesPlayed || 0; valB = b.gamesPlayed || 0;
+            } else if (sortType === 'wins_desc') {
+                valA = a.wins || 0; valB = b.wins || 0;
+            }
+        }
+
+        if (sortType === 'games_asc') return valA - valB;
+        return valB - valA;
+    });
+
+    tbody.innerHTML = sorted.map((p, index) => {
+        let rank = index + 1;
+        let medal = (rank === 1) ? '🥇' : (rank === 2) ? '🥈' : (rank === 3) ? '🥉' : '';
+
+        const displayGames = scope === 'today' ? (p.todayGames || 0) : (p.gamesPlayed || 0);
+        const displayWins = scope === 'today' ? (p.todayWins || 0) : (p.wins || 0);
+        const rate = displayGames > 0 ? Math.round((displayWins / displayGames) * 100) : 0;
+        const lv = p.level || 'BG';
+        const tierBadge = `<span class="tier-badge tier-${lv}">${lv}</span>`;
+
+        let statusHTML = `<span class="status-pill status-resting">พัก</span>`;
+        if (p.status === 'playing') statusHTML = `<span class="status-pill status-playing">🏸 แข่งอยู่</span>`;
+        else if (p.status === 'waiting') statusHTML = p.isResting ? `<span class="status-pill status-resting">💤 พัก</span>` : `<span class="status-pill status-queue">⏳ รอคิว</span>`;
+        else if (p.status === 'left') statusHTML = `<span class="status-pill status-left">🚪 กลับก่อน</span>`;
+
+        return `<tr><td>${medal} ${rank}</td><td>${sanitizeHTML(p.name)}</td><td>${tierBadge}</td><td style="font-weight:bold; color:#4FB3F0;">${p.mmr || 0}</td><td>${displayGames}</td><td>${displayWins}</td><td>${rate}%</td><td>${statusHTML}</td></tr>`;
+    }).join('');
+}
+
+// Reads the last `limit` finished matches a player took part in (from
+// matchLogs, which is newest-first) and returns them oldest-to-newest as
+// 'W'/'L', for the "ฟอร์ม 5 นัดหลัง" column. Matches by display name against
+// the same sanitized winners/losers strings the match log already stores.
+function getPlayerRecentForm(player, limit = 5) {
+    const safeName = sanitizeHTML(player.name);
+    const form = [];
+    for (const log of matchLogs) {
+        if (form.length >= limit) break;
+        const winners = log.winners.split(', ');
+        const losers = log.losers.split(', ');
+        if (winners.includes(safeName)) form.push('W');
+        else if (losers.includes(safeName)) form.push('L');
+    }
+    return form.reverse();
+}
+
+// Computes the four "Daily Awards" cards from data already tracked this
+// session (todayGames/todayWins, matchLogs, and their scores) — no new
+// data storage needed.
+function calculateDailyAwards() {
+    const active = players.filter(p => (p.todayGames || 0) > 0);
+
+    let mvp = null;
+    active.forEach(p => {
+        const rate = p.todayWins / p.todayGames;
+        if (!mvp || p.todayWins > mvp.todayWins || (p.todayWins === mvp.todayWins && rate > (mvp.todayWins / mvp.todayGames))) mvp = p;
+    });
+
+    let ironman = null;
+    active.forEach(p => { if (!ironman || (p.todayGames || 0) > (ironman.todayGames || 0)) ironman = p; });
+
+    const pairWins = {};
+    matchLogs.forEach(log => {
+        const names = log.winners.split(', ');
+        if (names.length === 2) {
+            const key = [names[0], names[1]].sort().join(' + ');
+            pairWins[key] = (pairWins[key] || 0) + 1;
+        }
+    });
+    let bestDuo = null, bestDuoWins = 0;
+    for (const [key, wins] of Object.entries(pairWins)) {
+        if (wins > bestDuoWins) { bestDuoWins = wins; bestDuo = key; }
+    }
+
+    let closest = null, closestMargin = Infinity;
+    matchLogs.forEach(log => {
+        if (log.scoreWin === null || log.scoreWin === undefined) return;
+        const margin = Math.abs(log.scoreWin - log.scoreLose);
+        if (margin < closestMargin) { closestMargin = margin; closest = log; }
+    });
+
+    return { mvp, ironman, bestDuo, bestDuoWins, closest };
+}
+
+function renderOverview() {
+    const statsBody = document.getElementById('overview-stats-body');
+    const repeatBody = document.getElementById('overview-repeat-body');
+
+    // --- KPI tiles ---
+    let totalSeconds = 0;
+    matchLogs.forEach(log => {
+        const [m, s] = (log.duration || '00:00').split(':').map(n => parseInt(n, 10) || 0);
+        totalSeconds += m * 60 + s;
+    });
+    let totalPoints = 0;
+    matchLogs.forEach(log => { if (log.scoreWin != null) totalPoints += (log.scoreWin + log.scoreLose); });
+
+    const kpiMatches = document.getElementById('kpi-total-matches');
+    const kpiTime = document.getElementById('kpi-total-time');
+    const kpiPlayers = document.getElementById('kpi-total-players');
+    const kpiPoints = document.getElementById('kpi-total-points');
+    if (kpiMatches) kpiMatches.innerText = matchLogs.length;
+    if (kpiTime) kpiTime.innerText = `${Math.round(totalSeconds / 60)} นาที`;
+    if (kpiPlayers) kpiPlayers.innerText = `${players.length} คน`;
+    if (kpiPoints) kpiPoints.innerText = totalPoints;
+
+    // --- Daily Awards ---
+    const awards = calculateDailyAwards();
+    const mvpEl = document.getElementById('award-mvp');
+    const ironmanEl = document.getElementById('award-ironman');
+    const duoEl = document.getElementById('award-duo');
+    const closestEl = document.getElementById('award-closest');
+    if (mvpEl) mvpEl.innerText = awards.mvp ? `${sanitizeHTML(awards.mvp.name)} (${awards.mvp.todayWins} Wins)` : '-';
+    if (ironmanEl) ironmanEl.innerText = awards.ironman ? `${sanitizeHTML(awards.ironman.name)} (${awards.ironman.todayGames} Games)` : '-';
+    if (duoEl) duoEl.innerText = awards.bestDuo ? `${awards.bestDuo} (${awards.bestDuoWins} Wins)` : '-';
+    if (closestEl) closestEl.innerText = awards.closest ? `คอร์ท ${awards.closest.court}: ${awards.closest.scoreWin}-${awards.closest.scoreLose}` : '-';
+
+    // --- Player performance table ---
+    const sorted = [...players].sort((a, b) => (b.todayGames || 0) - (a.todayGames || 0));
+    statsBody.innerHTML = sorted.map(p => {
+        let time = p.checkInTime ? new Date(p.checkInTime).toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'}) : '-';
+        const games = p.todayGames || 0;
+        const wins = p.todayWins || 0;
+        const losses = Math.max(0, games - wins);
+        const rate = games > 0 ? Math.round((wins / games) * 100) : 0;
+        const form = getPlayerRecentForm(p);
+        const formHTML = form.length > 0
+            ? form.map(r => `<span class="form-pill ${r === 'W' ? 'form-win' : 'form-loss'}">${r}</span>`).join('')
+            : '<span style="color:#94a3b8;">-</span>';
+        return `<tr><td style="text-align:left">${sanitizeHTML(p.name)}</td><td>${time}</td><td>${games}</td><td style="color:var(--accent); font-weight:bold;">${wins}</td><td style="color:var(--rose); font-weight:bold;">${losses}</td><td>${rate}%</td><td>${formHTML}</td></tr>`;
+    }).join('');
+
+    // --- Repeat pairings (teammates and opponents both counted) ---
+    let repeats = [];
+    for (const [key, count] of Object.entries(pairingHistory)) {
+        if (count > 1) {
+            const [id1, id2] = key.split('-');
+            const p1 = players.find(p => p.id == id1); const p2 = players.find(p => p.id == id2);
+            if (p1 && p2) repeats.push({ name: `${sanitizeHTML(p1.name)} + ${sanitizeHTML(p2.name)}`, type: 'จับคู่ร่วมทีม', count: count });
+        }
+    }
+    for (const [key, count] of Object.entries(opponentHistory)) {
+        if (count > 1) {
+            const [id1, id2] = key.split('-');
+            const p1 = players.find(p => p.id == id1); const p2 = players.find(p => p.id == id2);
+            if (p1 && p2) repeats.push({ name: `${sanitizeHTML(p1.name)} + ${sanitizeHTML(p2.name)}`, type: 'เจอกันเป็นคู่แข่ง', count: count });
+        }
+    }
+    repeats.sort((a, b) => b.count - a.count);
+    repeatBody.innerHTML = repeats.length === 0
+        ? '<tr><td colspan="3" style="color:var(--accent);">ไม่มีคู่ที่ลงเล่นด้วยกันเกิน 1 ครั้ง</td></tr>'
+        : repeats.map(s => `<tr><td style="text-align:left;">${s.name}</td><td>${s.type}</td><td style="color:var(--rose); font-weight:bold;">${s.count}</td></tr>`).join('');
+}
+
+// 💬 คัดลอกสรุปส่ง LINE ก๊วน — builds a paste-ready text summary from the
+// same KPI/award numbers shown on the Overview page.
+async function copyLineGroupReport() {
+    const awards = calculateDailyAwards();
+    const lines = [
+        `🏸 สรุปก๊วนแบดมินตัน - ห้อง ${currentRoomId}`,
+        `🏆 แมตช์ทั้งหมด: ${matchLogs.length} แมตช์`,
+        `👑 MVP วันนี้: ${awards.mvp ? awards.mvp.name : '-'}`,
+        `🐎 ม้าศึก: ${awards.ironman ? awards.ironman.name : '-'}`,
+        `🤝 คู่หูทองคำ: ${awards.bestDuo || '-'}`,
+    ];
+    const text = lines.join('\n');
+    try {
+        await navigator.clipboard.writeText(text);
+        alert('✅ คัดลอกสรุปแล้ว! เอาไปวางในไลน์กลุ่มก๊วนได้เลย');
+    } catch (err) {
+        alert('คัดลอกไม่ได้ครับ ลองอีกครั้ง หรือคัดลอกเองจากนี้:\n\n' + text);
+    }
+}
+
+async function endSession() {
+    const anyCourtActive = courts.some(c => countRealPlayers(c) > 0);
+    if (anyCourtActive) {
+        if (!confirm('⚠️ ยังมีคอร์ทที่เล่นอยู่! ถ้าจบตอนนี้ทุกคอร์ทจะถูกหยุดทันที (เกมที่ค้างอยู่จะไม่ถูกนับเป็นเกมที่จบ) ต้องการดำเนินการต่อไหม?')) return;
+        stopAllCourtsWithoutScoring();
+    }
+
+    // Save right now instead of waiting for the usual debounced triggerSave()
+    // — we're about to reload the page, so a delayed save would never fire.
+    saveData();
+
+    const element = document.getElementById("summary-capture-area");
+    html2canvas(element).then(canvas => {
+        const link = document.createElement('a');
+        link.download = 'badminton-summary.png';
+        link.href = canvas.toDataURL();
+        link.click();
+    });
+    sessionStorage.removeItem('ROOM_ID');
+    sessionStorage.removeItem('IS_HOST');
+    localStorage.removeItem('BADMINTON_HISTORY_CACHE');
+    alert("✅ จบการตีแบดวันนี้! ปิดระบบที่เครื่องนี้เรียบร้อย");
+    window.location.reload();
+}
+
+let currentBookingType = '';
+const openBookingModal = (type) => {
+    currentBookingType = type;
+    const candidates = players.filter(p => !p.bookingId && !p.isResting && p.status !== 'left').sort((a,b) => a.joinedQueueAt - b.joinedQueueAt);
+    const options = candidates.map(p => `<option value="${p.id}">${sanitizeHTML(p.name)}${p.status === 'playing' ? ' (กำลังเล่น)' : ''}</option>`).join('');
+    let html = '';
+    if (type === 'pair') {
+        html += `<h4>👥 จองคู่</h4><label>คนแรก:</label><select id="b-p1" style="width:100%; margin-bottom:10px;">${options}</select><label>คนที่สอง:</label><select id="b-p2" style="width:100%; margin-bottom:10px;">${options}</select>`;
+    } else {
+        html += `<h4>⚔️ จอง 4</h4><strong style="color:#FF6F91;">T1:</strong><select id="b-p1" style="width:100%;">${options}</select><select id="b-p2" style="width:100%;">${options}</select><br><strong style="color:#1D8FD9;">T2:</strong><select id="b-p3" style="width:100%;">${options}</select><select id="b-p4" style="width:100%;">${options}</select>`;
+    }
+    document.getElementById('booking-inputs').innerHTML = html;
+    const actions = document.querySelector('#booking-modal .modal-actions');
+    if (actions) { actions.style.display = 'flex'; actions.innerHTML = `<button class="secondary" onclick="closeModal('booking-modal')">ยกเลิก</button><button class="success" onclick="confirmBooking()">ยืนยัน</button>`; }
+    document.getElementById('booking-modal').style.display = 'flex';
+};
+
+const confirmBooking = () => {
+    const ids = [];
+    if (currentBookingType === 'pair') {
+        ids.push({id: document.getElementById('b-p1').value, team: 1});
+        ids.push({id: document.getElementById('b-p2').value, team: 1});
+    } else {
+        ids.push({id: document.getElementById('b-p1').value, team: 1}); ids.push({id: document.getElementById('b-p2').value, team: 1});
+        ids.push({id: document.getElementById('b-p3').value, team: 2}); ids.push({id: document.getElementById('b-p4').value, team: 2});
+    }
+    const unique = new Set(ids.map(x => x.id));
+    if (unique.size !== ids.length) { alert('❌ ห้ามเลือกชื่อซ้ำ'); return; }
+    const bId = 'book-' + (++bookingCounter);
+    ids.forEach(x => { const p = players.find(pl => pl.id == x.id); if (p) { p.bookingId = bId; p.bookingTeam = x.team; } });
+    closeModal('booking-modal'); updateQueueDisplay(); renderCourts(); triggerSave();
+};
+
+function updateQueueDisplay() {
+    const list = document.getElementById('player-queue');
+    const waiting = players.filter(p => p.status === 'waiting').sort((a, b) => a.joinedQueueAt - b.joinedQueueAt);
+    document.getElementById('queue-count').innerText = waiting.length;
+
+    list.innerHTML = waiting.map((p, index) => {
+        const estimatedWaitMins = getWaitTimeForQueue(index);
+        let badgeClass = 'wait-green'; let badgeText = `< ${estimatedWaitMins}m`;
+        if (estimatedWaitMins > 20) { badgeClass = 'wait-red'; badgeText = `~${estimatedWaitMins}m`; }
+        else if (estimatedWaitMins > 10) { badgeClass = 'wait-orange'; badgeText = `~${estimatedWaitMins}m`; }
+        else if (estimatedWaitMins > 5) { badgeText = `~${estimatedWaitMins}m`; }
+        else if (estimatedWaitMins > 0) { badgeText = `< ${estimatedWaitMins}m`; }
+        else { badgeText = 'เร็วๆ นี้'; }
+
+        const isSkipped = !p.isResting && (p.skipCount || 0) >= 1;
+        const itemClass = p.isResting ? 'player-item resting' : `player-item ${p.bookingId ? 'booked' : ''} ${p.isFastPass ? 'fastpass' : ''} ${isSkipped ? 'skipped' : ''}`;
+        const opacityStyle = p.isResting ? 'opacity: 0.6; background: #ddd;' : '';
+        const namePrefix = p.isResting ? '💤 ' : (p.isFastPass ? '🚀 ' : '');
+        const lv = p.level || 'BG';
+        const tierBadge = `<span class="tier-badge tier-${lv}" onclick="toggleLevel(${p.id})" style="cursor:pointer;" title="คลิกเปลี่ยนระดับ">${lv}</span>`;
+
+        const waitBadge = !p.isResting ? `<span class="wait-badge ${badgeClass}">${badgeText}</span>` : '<small style="color:gray;">(พัก)</small>';
+        // Anti-starvation pity rule: this player is guaranteed the next seat.
+        const skipAlertBadge = isSkipped ? `<span class="skip-alert-badge">🔥 ต้องได้ลงแล้ว!</span>` : '';
+        const mmrLabel = `<span style="font-size:0.72em; color:#94a3b8; font-family:monospace;">MMR ${p.mmr || 100}</span>`;
+        const indexBadge = `<span class="queue-index-badge">${index + 1}</span>`;
+
+        const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=random&color=fff`;
+        const avatarImg = p.avatarUrl ? p.avatarUrl : defaultAvatar;
+
+        // Gender is fixed (set from Hall of Fame), not something to tap-toggle
+        // here anymore — women's names get a small accent instead of a badge.
+        const safeName = p.gender === 'F' ? `<span class="lady-name">🌸 ${sanitizeHTML(p.name)}</span>` : sanitizeHTML(p.name);
+        // ✅ FIX: name passed into the onclick is now URL-encoded, not the raw or
+        // HTML-escaped name — a name containing a quote (e.g. "O'Brien") used to
+        // break this onclick handler. showBigImage() decodes it back for display.
+        const avatarHtml = `<img src="${avatarImg}" class="mini-avatar" style="margin-right: 5px; cursor: zoom-in;" onclick="event.stopPropagation(); showBigImage('${avatarImg}', '${encodeURIComponent(p.name)}')">`;
+
+        return `<li class="${itemClass}" style="${opacityStyle}"><div class="player-info">${indexBadge}${!p.isResting ? tierBadge : ''}${avatarHtml}<strong>${namePrefix}${safeName}</strong>${p.bookingId ? `<small onclick="cancelBooking('${p.bookingId}')" style="cursor:pointer;">🔒</small>` : ''}${skipAlertBadge}${!p.isResting ? mmrLabel : ''}${waitBadge}</div><button class="mini-btn ${p.isResting ? 'success' : 'secondary'}" style="margin-right:5px;" onclick="toggleRest(${p.id})">${p.isResting ? 'ตื่น' : '💤'}</button><button class="mini-btn danger" onclick="removePlayer(${p.id})">×</button></li>`;
+    }).join('');
+
+    updateNextMatchPanel();
+    updateHeaderStats();
+}
+
+function formatTime(s) { return `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`; }
+function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+const cancelBooking = (bId) => {
+    const group = players.filter(p => p.bookingId === bId);
+    if(group.length === 0) return;
+    if(!confirm(`ยกเลิกจองกลุ่มนี้?`)) return;
+    players.forEach(p => { if(p.bookingId === bId) { p.bookingId = null; p.bookingTeam = null; } });
+    updateQueueDisplay(); triggerSave();
+};
+
+const toggleRest = (id) => { const p = players.find(x => x.id === id); if (p) { p.isResting = !p.isResting; updateQueueDisplay(); renderCourts(); } };
+
+let currentManualAddCourtIdx = null;
+const openManualAddModal = (courtIdx) => {
+    if (countRealPlayers(courts[courtIdx]) >= 4) { alert('สนามเต็มแล้วเพื่อน!'); return; }
+    currentManualAddCourtIdx = courtIdx;
+    const waiting = players.filter(p => p.status === 'waiting' && !p.isResting).sort((a,b) => a.joinedQueueAt - b.joinedQueueAt);
+    if (waiting.length === 0) { alert('ไม่มีคนรอคิวเลยว่ะ!'); return; }
+    let html = `<h4>👇 เลือกคนลง คอร์ท ${courtIdx + 1}</h4><div style="display:flex; flex-direction:column; gap:5px;">`;
+    waiting.forEach(p => {
+        let label = p.bookingId ? `🔒 ${sanitizeHTML(p.name)} (Team)` : sanitizeHTML(p.name);
+        html += `<button class="secondary" style="text-align:left;" onclick="confirmManualAdd(${p.id})">${p.isFastPass?'🚀 ':''}${label}</button>`;
+    });
+    html += `</div>`;
+    document.getElementById('booking-inputs').innerHTML = html;
+    const modalActions = document.querySelector('#booking-modal .modal-actions');
+    const oldActions = modalActions.innerHTML;
+    modalActions.innerHTML = `<button class="secondary" onclick="closeModal('booking-modal'); restoreModal('${escape(oldActions)}');">ยกเลิก</button>`;
+    document.getElementById('booking-modal').style.display = 'flex';
+};
+
+window.restoreModal = (oldContent) => { document.querySelector('#booking-modal .modal-actions').innerHTML = unescape(oldContent); };
+
+const confirmManualAdd = (playerId) => {
+    const court = courts[currentManualAddCourtIdx];
+    const p = players.find(x => x.id === playerId);
+    if (!p) return;
+    if (countRealPlayers(court) >= 4) { alert('ช้าไป! สนามเต็มแล้ว'); return; }
+    p.status = 'playing'; p.sessionGames = 0; if(p.isFastPass) p.isFastPass = false;
+    p.bookingId = null; p.bookingTeam = null;
+    addPlayerToCourt(court, p);
+    closeModal('booking-modal');
+    const actions = document.querySelector('#booking-modal .modal-actions');
+    if (actions) actions.innerHTML = `<button class="secondary" onclick="closeModal('booking-modal')">ยกเลิก</button><button class="success" onclick="confirmBooking()">ยืนยัน</button>`;
+    renderCourts();
+};
+
+function updateNextMatchPanel() {
+    const container = document.getElementById('next-match-list');
+    if (!container) return;
+    const ruleEl = document.getElementById('game-rule');
+    const rule = ruleEl ? ruleEl.value : 'normal';
+    const needed = (rule === 'winner_stay') ? 2 : 4;
+    let html = '';
+    // Keep this preview consistent with fillCourtSmart(): don't suggest a
+    // booked pair/group that's still far back in the queue as an imminent match.
+    let excludeIds = getFarBookingIds();
+    const matchesToShow = Math.min(courtCount, 4);
+
+    for (let i = 0; i < matchesToShow; i++) {
+        const candidates = getSmartDraft(needed, excludeIds);
+        if (candidates.length < needed) {
+            if (i === 0) html += `<div style="text-align:center; width:100%; color: #ccc;">⏳ รอคนครบทีม ...</div>`;
+            break;
+        }
+        candidates.forEach(p => excludeIds.add(p.id));
+        const nameTag = (p) => `${p.isFastPass ? '🚀' : ''}${p.bookingId ? '🔒' : ''}${sanitizeHTML(p.name)}`;
+        html += `<div style="background: rgba(255,255,255,0.1); padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2);">
+            <div style="font-size:0.72em; color:#cbd5e1; margin-bottom:3px;">📢 Match ${i + 1}</div>
+            <div class="next-match-chip">`;
+        if (needed === 4) {
+            html += `<span class="side-a">${nameTag(candidates[0])} & ${nameTag(candidates[1])}</span><span class="vs-tag">VS</span><span class="side-b">${nameTag(candidates[2])} & ${nameTag(candidates[3])}</span>`;
+        } else {
+            html += `<span class="side-a">${nameTag(candidates[0])} & ${nameTag(candidates[1])}</span>`;
+        }
+        html += `</div></div>`;
+    }
+    container.innerHTML = html;
+}
+
+function editCourtName(idx) {
+    const currentName = courts[idx].customName || `#${idx + 1}`;
+    const newName = prompt(`ตั้งชื่อคอร์ทที่ ${idx + 1} ใหม่`, currentName);
+    if (newName && newName.trim() !== "") { courts[idx].customName = newName.trim(); renderCourts(); }
+}
+
+function getAverageGameTime() {
+    if (completedGameTimes.length === 0) return DEFAULT_GAME_TIME;
+    const sum = completedGameTimes.reduce((a, b) => a + b, 0);
+    return Math.round(sum / completedGameTimes.length);
+}
+
+function getWaitTimeForQueue(queueIndex) {
+    const avgTime = getAverageGameTime();
+    const now = Date.now();
+    const gameRuleSelect = document.getElementById('game-rule');
+    const isWinnerStay = gameRuleSelect && (gameRuleSelect.value.includes('2') || gameRuleSelect.value.includes('stay'));
+    const spotsPerCourt = isWinnerStay ? 2 : 4;
+    let availableSlots = [];
+
+    courts.forEach(c => {
+        const rule = c.rule || 'normal';
+        const isWinnerStay = (rule === 'winner_stay');
+        const spots = isWinnerStay ? 2 : 4;
+        let freeAt = now;
+        if (c.gameStartTime) {
+            let expected = c.gameStartTime + (avgTime * 60000);
+            if (expected < now) expected = now + 30000;
+            freeAt = expected;
+        }
+        for (let k = 0; k < spots; k++) availableSlots.push(freeAt);
+    });
+    availableSlots.sort((a, b) => a - b);
+
+    if (queueIndex < availableSlots.length) {
+        const mySlotTime = availableSlots[queueIndex];
+        return Math.max(0, Math.round((mySlotTime - now) / 60000));
+    } else {
+        const totalCapacity = availableSlots.length || 4;
+        const cycles = Math.floor(queueIndex / totalCapacity);
+        const remainder = queueIndex % totalCapacity;
+        const baseSlotTime = availableSlots[remainder] || now;
+        const waitMs = (baseSlotTime - now) + (cycles * avgTime * 60000);
+        return Math.max(0, Math.round(waitMs / 60000));
+    }
+}
+
+
+function restoreState(json) {
+    if (isModalOpen() || !json) return;
+    const state = JSON.parse(json);
+    players = state.players;
+    if (state.courtCount) { courtCount = state.courtCount; }
+    courts = state.courts.map(c => { c.interval = null; return c; });
+    renderCourts(); updateQueueDisplay(); updateNextMatchPanel();
+}
+
+function showShareLinkModal() {
+    const baseUrl = (typeof APP_URL !== 'undefined' && APP_URL) ? APP_URL : window.location.href.split('?')[0];
+    const viewerUrl = baseUrl + '?mode=viewer';
+    const html = `<div style="text-align:center;"><h3>📡 ลิงก์สำหรับเพื่อน</h3><input type="text" value="${viewerUrl}" id="share-link-input" style="width:100%; padding:10px;"><button class="success" onclick="copyShareLink()">📋 Copy</button><button class="secondary" onclick="closeModal('booking-modal')">ปิด</button></div>`;
+    document.getElementById('booking-inputs').innerHTML = html;
+    document.getElementById('booking-modal').style.display = 'flex';
+    document.querySelector('#booking-modal .modal-actions').style.display = 'none';
+}
+
+function copyShareLink() {
+    const copyText = document.getElementById("share-link-input");
+    copyText.select(); document.execCommand("copy"); alert("ก๊อปปี้แล้ว!");
+}
+
+function savePlayerProfileToCloud(player) {
+    if (typeof db === 'undefined' || !player) return;
+    db.collection('players_profile').doc(player.name).set({
+        name: player.name,
+        level: player.level || 'BG',
+        gender: player.gender || 'M',
+        gamesPlayed: player.gamesPlayed || 0,
+        wins: player.wins || 0,
+        mmr: typeof player.mmr !== 'undefined' ? player.mmr : 100
+    }, { merge: true })
+    .then(() => console.log(`💾 ซิงค์โปรไฟล์ของ ${player.name} ลง Cloud`))
+    .catch(err => console.error("Error saving profile:", err));
+}
+
+// ✅ FIX: this used to also live as a stray top-level `init();` call at the very
+// end of this file, which ran for EVERY visitor (host, admin, AND spectator)
+// immediately on page load — before any role was even chosen. That meant every
+// spectator's browser was independently running the auto-fill/auto-start timers
+// and pushing writes to Firebase, racing against the host. Now init() only runs
+// from createRoom()/joinRoomAdmin() (above) and here, for a HOST resuming a
+// session after a page refresh. Spectators never call init().
+window.onload = function() {
+    const savedRoomId = sessionStorage.getItem('ROOM_ID');
+    const savedIsHost = sessionStorage.getItem('IS_HOST');
+
+    if (savedRoomId) {
+        currentRoomId = savedRoomId;
+        isHost = (savedIsHost === 'true');
+        document.getElementById('landing-page').style.display = 'none';
+        document.getElementById('app-container').style.display = 'block';
+        document.getElementById('display-room-id').innerText = currentRoomId;
+
+        if (isHost) {
+            document.getElementById('display-role').innerText = "👑 HOST (คนคุม)";
+            document.getElementById('display-role').style.background = "#FF6F91";
+            init(); // resuming as host/admin: restart local intervals
+        } else {
+            document.body.classList.add('view-mode');
+            document.getElementById('display-role').innerText = "📱 VIEWER (ดูอย่างเดียว)";
+            document.getElementById('display-role').style.background = "#7f8c8d";
+        }
+        if (typeof syncFromFirebase === 'function') syncFromFirebase();
+        console.log("🔄 กู้ชีพสำเร็จ! กลับเข้าห้อง:", currentRoomId, "สถานะ Host:", isHost);
+    }
+    // No savedRoomId: still on the landing page. init() will run once the
+    // user actually creates or joins a room.
+};
+
+// ==========================================
+// 📖 ระบบจิ้มชื่อจาก Database
+// ==========================================
+let cloudPlayersCache = [];
+let dbSelectedNames = new Set();
+
+function openDbSelector() {
+    document.getElementById('dbModal').style.display = 'flex';
+    document.getElementById('dbSearch').value = '';
+    dbSelectedNames = new Set();
+    const listDiv = document.getElementById('dbPlayerList');
+    listDiv.innerHTML = '<div style="padding:20px; text-align:center;">กำลังโหลดข้อมูล... ⏳</div>';
+
+    if (typeof db === 'undefined') return;
+    db.collection('players_profile').get().then(snapshot => {
+        cloudPlayersCache = [];
+        snapshot.forEach(doc => cloudPlayersCache.push(doc.data()));
+        renderDbPlayers(cloudPlayersCache);
+    }).catch(err => {
+        listDiv.innerHTML = '<div style="color:red; text-align:center;">โหลดพลาดว่ะ! เช็คเน็ตดิ๊</div>';
+    });
+}
+
+function closeDbSelector() {
+    document.getElementById('dbModal').style.display = 'none';
+}
+
+function sortDbPlayers(list) {
+    const sortBy = document.getElementById('dbSortSelect') ? document.getElementById('dbSortSelect').value : 'mmr';
+    const sorted = [...list];
+    if (sortBy === 'name') sorted.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+    else sorted.sort((a, b) => (b.mmr || 0) - (a.mmr || 0));
+    return sorted;
+}
+
+function renderDbPlayers(playerList) {
+    const listDiv = document.getElementById('dbPlayerList');
+    listDiv.innerHTML = '';
+    const sorted = sortDbPlayers(playerList);
+
+    sorted.forEach(p => {
+        const isAlreadyInQueue = players.some(activeP => activeP.name === p.name && activeP.status !== 'left');
+        const isSelected = dbSelectedNames.has(p.name);
+
+        const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=random&color=fff`;
+        const avatar = p.avatarUrl || defaultAvatar;
+        const safeName = sanitizeHTML(p.name);
+        const encName = encodeURIComponent(p.name); // safe for the onclick argument
+
+        listDiv.innerHTML += `
+            <div class="db-player-item ${isSelected ? 'db-item-selected' : ''}" ${isAlreadyInQueue ? '' : `onclick="toggleDbSelect('${encName}')"`} style="${isAlreadyInQueue ? 'opacity:0.5; background:#eee; cursor:default;' : ''}">
+                <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+                    ${isAlreadyInQueue ? '' : `<input type="checkbox" class="db-checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleDbSelect('${encName}')">`}
+                    <img src="${avatar}" class="mini-avatar" style="width:35px; height:35px; margin-right:2px; flex-shrink:0;">
+                    <div style="min-width:0;">
+                        <strong style="font-size:1.05em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">${safeName}</strong>
+                        <span style="font-size:0.8em; color:#7f8c8d;">MMR: ${p.mmr || 100}</span>
+                    </div>
+                </div>
+                ${isAlreadyInQueue ? `<span style="font-size:0.75em; color:#FF6F91; font-weight:bold; flex-shrink:0;">มีในคิวแล้ว</span>` : ''}
+            </div>
+        `;
+    });
+}
+
+function toggleDbSelect(encodedName) {
+    const name = decodeURIComponent(encodedName);
+    if (dbSelectedNames.has(name)) dbSelectedNames.delete(name);
+    else dbSelectedNames.add(name);
+
+    const countEl = document.getElementById('dbSelectedCount');
+    const addBtn = document.getElementById('dbAddSelectedBtn');
+    if (countEl) countEl.innerText = `เลือกไว้ ${dbSelectedNames.size} คน`;
+    if (addBtn) addBtn.disabled = dbSelectedNames.size === 0;
+    renderDbPlayers(cloudPlayersCache.filter(p => p.name.toLowerCase().includes(document.getElementById('dbSearch').value.toLowerCase())));
+}
+
+function filterDbPlayers() {
+    const keyword = document.getElementById('dbSearch').value.toLowerCase();
+    const filtered = cloudPlayersCache.filter(p => p.name.toLowerCase().includes(keyword));
+    renderDbPlayers(filtered);
+}
+
+// Adds everyone ticked in one go — reuses addPlayers()'s existing per-name
+// Firestore-profile lookup logic by feeding it all the selected names at once.
+async function addSelectedFromDb() {
+    if (dbSelectedNames.size === 0) return;
+    const names = [...dbSelectedNames].filter(name => !players.some(p => p.name === name && p.status !== 'left'));
+    if (names.length === 0) { dbSelectedNames = new Set(); closeDbSelector(); return; }
+
+    const tempBox = document.createElement('textarea');
+    tempBox.value = names.join('\n');
+
+    const realBox = document.getElementById('new-players');
+    realBox.id = 'temp-hidden-box';
+    tempBox.id = 'new-players';
+    document.body.appendChild(tempBox);
+
+    await addPlayers();
+
+    tempBox.remove();
+    realBox.id = 'new-players';
+
+    dbSelectedNames = new Set();
+    document.getElementById('dbSelectedCount').innerText = 'เลือกไว้ 0 คน';
+    document.getElementById('dbAddSelectedBtn').disabled = true;
+    closeDbSelector();
+}
+// ==========================================
+// 🖼️ ระบบซูมดูรูปโปรไฟล์ใหญ่
+// ==========================================
+function showBigImage(url, encodedName) {
+    document.getElementById('big-image-name').innerText = decodeURIComponent(encodedName);
+    document.getElementById('big-image-view').src = url;
+    document.getElementById('image-modal').style.display = 'flex';
+}
+
+function closeBigImage() {
+    document.getElementById('image-modal').style.display = 'none';
+}
+// ✅ FIX: removed the stray top-level `init();` that used to be here — see the
+// window.onload comment above for why.

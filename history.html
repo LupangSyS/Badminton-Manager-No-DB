@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Match History & Analytics (PRO)</title>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Sarabun', sans-serif; background-color: #f0f4f8; padding: 20px; color: #2c3e50; }
+        h1 { text-align: center; font-size: 2.5rem; text-transform: uppercase; margin-bottom: 5px; }
+        .container { max-width: 800px; margin: 0 auto; }
+
+        .day-card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+        .day-header { font-size: 1.5rem; font-weight: bold; color: #8e44ad; border-bottom: 2px solid #f0f4f8; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;}
+
+        .match-row { display: flex; align-items: center; justify-content: space-between; background: #f9f9f9; padding: 10px; border-radius: 8px; margin-bottom: 10px; border-left: 5px solid #27ae60; }
+        .team { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; min-width: 0; }
+        .team.losers { flex-direction: row-reverse; }
+
+        .player-chip { display: flex; align-items: center; background: white; padding: 4px 10px; border-radius: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); font-size: 0.9em; }
+        .mini-avatar { width: 28px; height: 28px; border-radius: 50%; margin-right: 8px; object-fit: cover; border: 1px solid #ccc; background: white;}
+        .vs-side { display: flex; align-items: center; gap: 8px; width: 40%; justify-content: center; }
+        .vs-side.losers-side { opacity: 0.8; }
+        .vs-label { font-weight: bold; color: #b0b8bd; font-size: 0.8em; flex-shrink: 0; padding: 0 4px; }
+        .score-circle {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+            font-weight: 800; font-size: 0.95em;
+        }
+        .score-circle.score-win { background: #d4f7e0; color: #1e8449; }
+        .score-circle.score-lose { background: #fde2e2; color: #c0392b; }
+
+        .btn { padding: 10px 20px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; color: white; background: #3498db; transition: 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.1);}
+        .btn:hover { opacity: 0.8; transform: translateY(-1px);}
+        .btn-warning { background: #f39c12; }
+        .btn-active { background: #2c3e50 !important; border: 2px solid #f1c40f;}
+
+        /* สไตล์ตารางวิเคราะห์รายคน */
+        .analytics-table { width:100%; border-collapse:collapse; text-align:left; margin-top: 15px;}
+        .analytics-table th { padding:12px; background: rgba(0,0,0,0.05); border-bottom: 2px solid #ddd; }
+        .analytics-table td { padding:12px; border-bottom: 1px solid #eee; }
+        .analytics-table tr:hover { background: #f9f9f9; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>📊 Data Analytics</h1>
+        <p style="text-align: center; color: #7f8c8d; margin-bottom: 20px;">ขุดคุ้ยข้อมูลเชิงลึก สถิติย้อนหลัง และวิเคราะห์คู่หู</p>
+
+        <div style="display: flex; gap: 10px; margin-bottom: 20px; justify-content: center;">
+            <button id="btn-tab-history" class="btn btn-active" onclick="switchTab('history')">📅 ประวัติรายวัน</button>
+            <button id="btn-tab-partner" class="btn btn-warning" onclick="switchTab('partner')">🤝 สถิติคู่หู (รายบุคคล)</button>
+        </div>
+
+        <div id="content-area">
+            <div style="text-align:center;">กำลังขุดคุ้ยข้อมูลจาก Database... ⏳</div>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
+
+    <script>
+        // 🛡️ ป้องกัน XSS ตอนแทรกชื่อผู้เล่นลงหน้าเว็บ
+        function sanitizeHTML(str) {
+            if (!str) return '';
+            return str.replace(/[&<>'"]/g, tag => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+            }[tag] || tag));
+        }
+
+        // Note: this apiKey is safe to be public — see the note in firebase-sync.js.
+        const firebaseConfig = {
+            apiKey: "AIzaSyCnrkEbVOM3i7f59rAnWN9mgPC9iekEuIA",
+            authDomain: "badminton-manager-e77bb.firebaseapp.com",
+            projectId: "badminton-manager-e77bb",
+            storageBucket: "badminton-manager-e77bb.firebasestorage.app",
+            messagingSenderId: "402072472322",
+            appId: "1:402072472322:web:a212ed6eaff7ec10fbd01b",
+            measurementId: "G-2EFE485QTK"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        let allMatches = [];
+        let groupedMatches = {}; // เก็บแยกเป็นรายห้อง (roomId) ไม่ใช่แค่รายวัน — กันข้อมูลชนกันตอนแชร์เว็บให้เพื่อนสร้างห้องคนละห้องวันเดียวกัน
+        let roomMeta = {};        // roomId -> { dateStr, sortKey, suffix, lastUpdated, gameCount }
+        let playerProfiles = {};
+
+        let currentTab = 'history';
+        let currentRoomId = null;
+        let currentFocusPlayer = null;   // คนที่กดเลือกดูสถิติเฉพาะวัน/ห้องนี้
+        let currentAnalyzedPlayer = '';
+        let currentPlayerPartnerStats = []; // เก็บสถิติเวลาจิ้มดูรายคน (all-time, แท็บสถิติคู่หู)
+        let roomPlayers = {}; // roomId -> [{name, checkInTime}] — used to reconstruct the timeline
+
+        async function fetchData() {
+            try {
+                const profileSnap = await db.collection('players_profile').get();
+                profileSnap.forEach(doc => { playerProfiles[doc.id] = doc.data(); });
+
+                const roomSnap = await db.collection('rooms').get();
+                let rawMatches = [];
+                roomMeta = {};
+
+                roomSnap.forEach(doc => {
+                    const roomData = doc.data();
+                    const roomId = doc.id;
+
+                    if (roomData.matchLogs && roomData.matchLogs.length > 0) {
+                        const day = roomId.substring(0, 2);
+                        const month = roomId.substring(2, 4);
+                        const dateStr = `${day}/${month}`;
+                        const sortKey = parseInt(month + day);
+                        const suffix = roomId.includes('-') ? roomId.split('-')[1] : '';
+
+                        roomMeta[roomId] = {
+                            dateStr, sortKey, suffix,
+                            lastUpdated: roomData.lastUpdated ? new Date(roomData.lastUpdated).getTime() : 0,
+                            gameCount: roomData.matchLogs.length
+                        };
+                        roomPlayers[roomId] = (roomData.players || [])
+                            .filter(p => p.name && p.checkInTime)
+                            .map(p => ({ name: p.name, checkInTime: p.checkInTime, level: p.level || 'BG' }));
+
+                        roomData.matchLogs.forEach(log => {
+                            if (!log.winners || !log.losers) return;
+                            const winArray = log.winners.split(',').map(n => n.trim()).filter(n => n);
+                            const loseArray = log.losers.split(',').map(n => n.trim()).filter(n => n);
+
+                            rawMatches.push({
+                                roomId, date: dateStr, sortMonthDay: sortKey, time: log.time || "00:00",
+                                duration: log.duration || "-", court: log.court || null,
+                                winners: winArray, losers: loseArray,
+                                scoreWin: (typeof log.scoreWin === 'number') ? log.scoreWin : null,
+                                scoreLose: (typeof log.scoreLose === 'number') ? log.scoreLose : null,
+                                restingNames: Array.isArray(log.restingNames) ? log.restingNames : null,
+                                bookedNames: Array.isArray(log.bookedNames) ? log.bookedNames : null,
+                                rankFilterOn: !!log.rankFilterOn,
+                                rankMin: log.rankMin || null,
+                                rankMax: log.rankMax || null
+                            });
+                        });
+                    }
+                });
+
+                rawMatches.sort((a, b) => {
+                    if (b.sortMonthDay !== a.sortMonthDay) return b.sortMonthDay - a.sortMonthDay;
+                    return b.time.localeCompare(a.time);
+                });
+
+                allMatches = rawMatches;
+
+                groupedMatches = {};
+                allMatches.forEach(m => {
+                    if(!groupedMatches[m.roomId]) groupedMatches[m.roomId] = [];
+                    groupedMatches[m.roomId].push(m);
+                });
+
+                switchTab('history');
+
+            } catch (err) {
+                console.error(err);
+                document.getElementById('content-area').innerHTML = '<div style="color:red; text-align:center;">โหลดไม่ขึ้นว่ะ เช็คเน็ตดิ๊!</div>';
+            }
+        }
+
+        function getAvatar(name) {
+            if (playerProfiles[name] && playerProfiles[name].avatarUrl) return playerProfiles[name].avatarUrl;
+            return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random&color=fff`;
+        }
+
+        // ===============================================
+        // 🔄 ระบบเปลี่ยนแท็บ
+        // ===============================================
+        function switchTab(tabName) {
+            currentTab = tabName;
+            document.getElementById('btn-tab-history').className = `btn ${tabName==='history'?'btn-active':'btn-warning'}`;
+            document.getElementById('btn-tab-history').style.background = tabName==='history'?'#2c3e50':'#3498db';
+
+            document.getElementById('btn-tab-partner').className = `btn ${tabName==='partner'?'btn-active':'btn-warning'}`;
+            document.getElementById('btn-tab-partner').style.background = tabName==='partner'?'#2c3e50':'#f39c12';
+
+            if (tabName === 'history') renderHistoryTab();
+            else renderPartnerTab();
+        }
+
+        // ===============================================
+        // 📅 แท็บที่ 1: ประวัติรายวัน (มี Dropdown ให้เลือกวัน)
+        // ===============================================
+        function renderHistoryTab() {
+            const container = document.getElementById('content-area');
+            const roomIds = Object.keys(groupedMatches);
+
+            if(roomIds.length === 0) {
+                container.innerHTML = '<div style="text-align:center; color:gray;">ยังไม่มีประวัติในระบบเลยว่ะ!</div>'; return;
+            }
+
+            roomIds.sort((a, b) => {
+                const ma = roomMeta[a] || {}, mb = roomMeta[b] || {};
+                if ((mb.lastUpdated || 0) !== (ma.lastUpdated || 0)) return (mb.lastUpdated || 0) - (ma.lastUpdated || 0);
+                return (mb.sortKey || 0) - (ma.sortKey || 0);
+            });
+
+            let html = `
+            <div style="text-align:center; margin-bottom: 20px; background:white; padding:15px; border-radius:12px; box-shadow:0 4px 6px rgba(0,0,0,0.05);">
+                <label style="font-size:1.2em; font-weight:bold; margin-right:10px;">🔍 เลือกวันที่/ห้อง:</label>
+                <select id="date-selector" onchange="onRoomSelectChange(this.value)" style="padding:10px; font-size:1.1em; border-radius:8px; border:2px solid #3498db; cursor:pointer;">
+            `;
+            roomIds.forEach(rid => {
+                const meta = roomMeta[rid] || {};
+                const label = meta.suffix ? `${meta.dateStr} • ห้อง ${meta.suffix}` : meta.dateStr;
+                html += `<option value="${sanitizeHTML(rid)}">${sanitizeHTML(label)} (ตีไป ${groupedMatches[rid].length} เกม)</option>`;
+            });
+            html += `</select></div><div id="daily-match-list"></div>`;
+
+            container.innerHTML = html;
+            currentFocusPlayer = null;
+            renderSpecificDate(roomIds[0]);
+        }
+
+        function onRoomSelectChange(roomId) {
+            currentFocusPlayer = null; // สลับห้อง/วันแล้ว เคลียร์ตัวกรองผู้เล่นเก่าทิ้ง
+            renderSpecificDate(roomId);
+        }
+
+        function renderSpecificDate(roomId) {
+            currentRoomId = roomId;
+            const matches = groupedMatches[roomId] || [];
+            const meta = roomMeta[roomId] || {};
+            const label = meta.suffix ? `${meta.dateStr} • ห้อง ${meta.suffix}` : meta.dateStr;
+
+            const namesInRoom = new Set();
+            matches.forEach(m => { m.winners.forEach(n => namesInRoom.add(n)); m.losers.forEach(n => namesInRoom.add(n)); });
+            const roomPlayerList = Array.from(namesInRoom).sort();
+
+            let html = `<div class="day-card">
+                <h2 style="color:#8e44ad; border-bottom:2px solid #f0f4f8; padding-bottom:10px; margin-top:0;">📅 ประจำวันที่ ${sanitizeHTML(label)}</h2>
+
+                <div style="margin-bottom:16px;">
+                    <div style="font-size:0.85em; color:#7f8c8d; margin-bottom:8px;">👇 กดชื่อเพื่อดูสถิติของคนนั้น เฉพาะห้องนี้:</div>
+                    <div style="display:flex; flex-wrap:wrap; gap:8px;">`;
+
+            roomPlayerList.forEach(name => {
+                // Name is URL-encoded before going into the onclick handler so a
+                // raw apostrophe (e.g. "O'Brien") can't break the button.
+                const encName = encodeURIComponent(name);
+                const active = currentFocusPlayer === name;
+                html += `<button class="btn" style="background:${active ? '#8e44ad' : '#f0f4f8'}; color:${active ? 'white' : '#2c3e50'}; border:1px solid #ccc; font-size:0.85em; padding:6px 12px;" onclick="focusRoomPlayer('${encName}')">${sanitizeHTML(name)}</button>`;
+            });
+            if (currentFocusPlayer) {
+                html += `<button class="btn btn-warning" style="font-size:0.85em; padding:6px 12px;" onclick="clearRoomFocus()">❌ ล้าง</button>`;
+            }
+            html += `</div></div>`;
+
+            if (currentFocusPlayer && namesInRoom.has(currentFocusPlayer)) {
+                html += renderRoomPlayerStatsHTML(matches, currentFocusPlayer);
+                html += renderPlayerTimelineHTML(roomId, currentFocusPlayer);
+            }
+
+            matches.forEach(m => {
+                const involved = currentFocusPlayer ? (m.winners.includes(currentFocusPlayer) || m.losers.includes(currentFocusPlayer)) : true;
+                // ✅ FIX: player names are sanitized before insertion (previously inserted raw)
+                const renderTeam = (teamArray) => teamArray.map(name => `
+                    <div class="player-chip" style="${name === currentFocusPlayer ? 'border:2px solid #8e44ad;' : ''}">
+                        <img src="${getAvatar(name)}" class="mini-avatar"> ${sanitizeHTML(name)}
+                    </div>
+                `).join('');
+
+                const scoreKnown = m.scoreWin !== null;
+                const winCircle = scoreKnown ? `<span class="score-circle score-win">${m.scoreWin}</span>` : '';
+                const loseCircle = scoreKnown ? `<span class="score-circle score-lose">${m.scoreLose}</span>` : '';
+
+                html += `
+                    <div class="match-row" style="${involved ? '' : 'opacity:0.3;'}">
+                        <div style="font-size:0.8em; color:gray; width:40px;">${sanitizeHTML(m.time)}</div>
+                        <div class="vs-side">
+                            <div class="team">${renderTeam(m.winners)} <span style="color:#27ae60; font-size:1.2em;">👑</span></div>
+                            ${winCircle}
+                        </div>
+                        <div class="vs-label">VS</div>
+                        <div class="vs-side losers-side">
+                            ${loseCircle}
+                            <div class="team losers">${renderTeam(m.losers)}</div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += `
+                <div style="margin-top:24px; padding-top:16px; border-top:1px dashed #e74c3c; text-align:center;">
+                    <button class="btn" style="background:#e74c3c;" onclick="deleteRoomLog('${roomId}')">🗑 ลบข้อมูลห้องนี้ทั้งหมด (Admin เท่านั้น)</button>
+                </div>
+            </div>`;
+            document.getElementById('daily-match-list').innerHTML = html;
+        }
+
+        function focusRoomPlayer(encodedName) {
+            currentFocusPlayer = decodeURIComponent(encodedName);
+            renderSpecificDate(currentRoomId);
+        }
+
+        function clearRoomFocus() {
+            currentFocusPlayer = null;
+            renderSpecificDate(currentRoomId);
+        }
+
+        // สถิติของผู้เล่นคนเดียว เฉพาะภายในห้อง/วันที่กำลังดูอยู่ (ไม่ปนกับห้องอื่น)
+        function renderRoomPlayerStatsHTML(matches, playerName) {
+            let wins = 0, losses = 0;
+            const partners = {}, opponents = {};
+
+            matches.forEach(m => {
+                const isWinner = m.winners.includes(playerName);
+                const isLoser = m.losers.includes(playerName);
+                if (!isWinner && !isLoser) return;
+                if (isWinner) wins++; else losses++;
+
+                const myTeam = isWinner ? m.winners : m.losers;
+                const oppTeam = isWinner ? m.losers : m.winners;
+
+                const partner = myTeam.find(n => n !== playerName);
+                if (partner) {
+                    if (!partners[partner]) partners[partner] = { games: 0, wins: 0 };
+                    partners[partner].games++;
+                    if (isWinner) partners[partner].wins++;
+                }
+                oppTeam.forEach(opp => {
+                    if (!opponents[opp]) opponents[opp] = { games: 0, wins: 0 };
+                    opponents[opp].games++;
+                    if (isWinner) opponents[opp].wins++;
+                });
+            });
+
+            const total = wins + losses;
+            const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
+            const rateColor = (r) => r >= 60 ? '#2ecc71' : (r <= 40 ? '#e74c3c' : '#f39c12');
+
+            // แต่ละแถวมีรูป + แท่งกราฟสัดส่วนชนะ/แพ้ ให้กวาดตาดูรู้เรื่องเร็ว
+            // แทนที่จะเป็นตัวหนังสือ "1W-2L" ล้วนๆ ที่อ่านทีละบรรทัดถึงจะเก็ตความหมาย
+            const rowsHTML = (obj) => {
+                const entries = Object.entries(obj).sort((a, b) => b[1].games - a[1].games);
+                if (entries.length === 0) return `<div style="color:#94a3b8; font-size:0.85em; padding:8px 0;">— ไม่มีข้อมูล —</div>`;
+                return entries.map(([name, s]) => {
+                    const loss = s.games - s.wins;
+                    const rate = Math.round((s.wins / s.games) * 100);
+                    const color = rateColor(rate);
+                    return `
+                    <div style="display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid #f0f4f8;">
+                        <img src="${getAvatar(name)}" class="mini-avatar" style="margin:0; width:30px; height:30px; flex-shrink:0;">
+                        <div style="flex:1; min-width:0;">
+                            <div style="display:flex; justify-content:space-between; gap:8px; font-size:0.88em; margin-bottom:3px;">
+                                <strong style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${sanitizeHTML(name)}</strong>
+                                <span style="color:#7f8c8d; font-size:0.85em; flex-shrink:0;">${s.games} เกม</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:6px;">
+                                <div style="flex:1; height:6px; background:#f0f4f8; border-radius:4px; overflow:hidden;" title="${s.wins}W-${loss}L">
+                                    <div style="width:${rate}%; height:100%; background:${color};"></div>
+                                </div>
+                                <span style="font-size:0.75em; font-weight:bold; color:${color}; flex-shrink:0; width:52px; text-align:right;">${s.wins}W-${loss}L</span>
+                            </div>
+                        </div>
+                    </div>`;
+                }).join('');
+            };
+
+            return `
+            <div style="background:#faf5ff; border:1px solid #e9d5ff; border-radius:12px; padding:16px; margin-bottom:16px;">
+                <div style="display:flex; align-items:center; gap:14px; margin-bottom:16px; flex-wrap:wrap;">
+                    <img src="${getAvatar(playerName)}" style="width:52px; height:52px; border-radius:50%; border:3px solid #8e44ad; flex-shrink:0;">
+                    <div style="flex:1; min-width:160px;">
+                        <strong style="font-size:1.15em;">${sanitizeHTML(playerName)}</strong>
+                        <div style="display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;">
+                            <span style="background:#f0f4f8; color:#2c3e50; font-size:0.78em; font-weight:bold; padding:3px 10px; border-radius:999px;">🏸 ${total} เกม</span>
+                            <span style="background:rgba(46,204,113,0.15); color:#27ae60; font-size:0.78em; font-weight:bold; padding:3px 10px; border-radius:999px;">✅ ชนะ ${wins}</span>
+                            <span style="background:rgba(231,76,60,0.12); color:#e74c3c; font-size:0.78em; font-weight:bold; padding:3px 10px; border-radius:999px;">❌ แพ้ ${losses}</span>
+                            <span style="background:${rateColor(winRate)}; color:white; font-size:0.78em; font-weight:bold; padding:3px 10px; border-radius:999px;">${winRate}% Win Rate</span>
+                        </div>
+                    </div>
+                </div>
+                <div style="display:flex; gap:24px; flex-wrap:wrap;">
+                    <div style="flex:1; min-width:200px;">
+                        <div style="font-weight:bold; font-size:0.85em; color:#8e44ad; margin-bottom:6px;">🤝 คู่หูวันนี้ (${Object.keys(partners).length})</div>
+                        ${rowsHTML(partners)}
+                    </div>
+                    <div style="flex:1; min-width:200px;">
+                        <div style="font-weight:bold; font-size:0.85em; color:#e74c3c; margin-bottom:6px;">⚔️ คู่แข่งที่เจอ (${Object.keys(opponents).length})</div>
+                        ${rowsHTML(opponents)}
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        // ==========================================
+        // 📈 เส้นเวลา (Timeline) — สร้างขึ้นมาจากข้อมูลที่มีอยู่แล้วล้วนๆ
+        // (เวลาจบ + ระยะเวลาแต่ละเกม + เวลาเช็คอิน) ไม่มีการเก็บข้อมูลใหม่เพิ่ม
+        //
+        // วิธีคิด "ถูกข้าม": ไล่ดูทุกแมตช์ในห้องเรียงตามเวลาเริ่ม (= เวลาจบ - ระยะเวลา)
+        // ถ้าคนที่เรากำลังดูอยู่ "เช็คอินแล้ว" และ "ไม่ได้ติดคอร์ทอยู่" ตอนแมตช์อื่นเริ่ม
+        // แต่ไม่ได้ถูกเลือกลงคอร์ทนั้น แปลว่าโดนข้ามไปรอบนั้น — ข้อจำกัด: ถ้าเคยกด "พัก"
+        // ระหว่างเกม อันนั้นไม่มีการบันทึกเวลาไว้ เลยอาจจะขึ้นเป็น "ถูกข้าม" ผิดๆ ได้
+        // ==========================================
+        function buildPlayerTimeline(roomId, playerName) {
+            const matches = groupedMatches[roomId] || [];
+            const roster = roomPlayers[roomId] || [];
+
+            const parseDurationSec = (mmss) => {
+                const parts = String(mmss || '0:00').split(':').map(Number);
+                if (parts.length !== 2 || parts.some(isNaN)) return 0;
+                return parts[0] * 60 + parts[1];
+            };
+
+            // "time" saved on each match is the FINISH time as HH:MM (no date, no
+            // seconds) — anchor it to a real calendar date using any check-in's date.
+            let refDate = new Date();
+            const anyCheckIn = roster.find(p => p.checkInTime);
+            if (anyCheckIn) refDate = new Date(anyCheckIn.checkInTime);
+            const parseTimeOfDay = (hhmm) => {
+                const bits = String(hhmm || '00:00').split(':').map(Number);
+                const d = new Date(refDate);
+                d.setHours(bits[0] || 0, bits[1] || 0, 0, 0);
+                return d;
+            };
+
+            const intervals = matches
+                .map(m => {
+                    const end = parseTimeOfDay(m.time);
+                    const start = new Date(end.getTime() - parseDurationSec(m.duration) * 1000);
+                    return { ...m, start, end };
+                })
+                .sort((a, b) => a.start - b.start);
+
+            if (intervals.length === 0) return { events: [], sessionStart: null, sessionEnd: null };
+
+            const checkInByName = {};
+            roster.forEach(p => { checkInByName[p.name] = new Date(p.checkInTime); });
+            const RANK_LEVELS = ['BG', 'N', 'S', 'P'];
+            const levelByName = {};
+            roster.forEach(p => { levelByName[p.name] = p.level || 'BG'; });
+
+            const sessionStart = intervals[0].start;
+            const sessionEnd = intervals[intervals.length - 1].end;
+
+            // Precompute the player's OWN play intervals first, and check against
+            // those directly — rather than a running "busy until" tally updated in
+            // start-time order, which would misfire if two courts' matches happen
+            // to start at the exact same instant (tie-order in the sort would then
+            // decide whether "busy" was already recorded, which isn't reliable).
+            const ownIntervals = intervals
+                .filter(iv => [...iv.winners, ...iv.losers].includes(playerName))
+                .map(iv => [iv.start, iv.end]);
+            const isBusyAt = (t) => ownIntervals.some(([s, e]) => t >= s && t < e);
+
+            const events = [];
+
+            intervals.forEach(iv => {
+                const team = [...iv.winners, ...iv.losers];
+                const involved = team.includes(playerName);
+
+                if (involved) {
+                    const isWinner = iv.winners.includes(playerName);
+                    const partner = (isWinner ? iv.winners : iv.losers).find(n => n !== playerName);
+                    const opponents = isWinner ? iv.losers : iv.winners;
+                    const scoreKnown = iv.scoreWin !== null && iv.scoreWin !== undefined;
+                    events.push({
+                        type: 'enter', time: iv.start, court: iv.court,
+                        label: `${playerName} + ${partner || '-'}  VS  ${opponents.join(' + ')}`
+                    });
+                    events.push({
+                        type: 'finish', time: iv.end, court: iv.court,
+                        label: isWinner ? '🏆 ชนะ' : '❌ แพ้',
+                        detail: scoreKnown ? `${isWinner ? iv.scoreWin : iv.scoreLose}-${isWinner ? iv.scoreLose : iv.scoreWin}` : null
+                    });
+                } else {
+                    const checkedIn = checkInByName[playerName] && checkInByName[playerName] <= iv.start;
+
+                    // Not every "didn't play this round" is a real skip — exclude the
+                    // legitimate reasons we now have data for: resting, booked with
+                    // someone else, or outside that court's rank filter. Older matches
+                    // (before this was tracked) have these fields as null, so they fall
+                    // through unchanged — this only sharpens skip detection going forward.
+                    const wasResting = iv.restingNames && iv.restingNames.includes(playerName);
+                    const wasBooked = iv.bookedNames && iv.bookedNames.includes(playerName);
+                    let rankExcluded = false;
+                    if (iv.rankFilterOn && iv.rankMin && iv.rankMax) {
+                        const lvl = RANK_LEVELS.indexOf(levelByName[playerName] || 'BG');
+                        const minIdx = RANK_LEVELS.indexOf(iv.rankMin), maxIdx = RANK_LEVELS.indexOf(iv.rankMax);
+                        if (lvl >= 0 && (lvl < minIdx || lvl > maxIdx)) rankExcluded = true;
+                    }
+
+                    if (checkedIn && !isBusyAt(iv.start) && !wasResting && !wasBooked && !rankExcluded) {
+                        events.push({
+                            type: 'skip', time: iv.start, court: iv.court,
+                            label: 'ถูกข้าม',
+                            detail: `${iv.winners.join(' + ')}  VS  ${iv.losers.join(' + ')}`
+                        });
+                    }
+                }
+            });
+
+            events.sort((a, b) => a.time - b.time);
+            return { events, sessionStart, sessionEnd };
+        }
+
+        let currentTimelineEvents = [];
+        let timelineZoomPxPerMin = 6;
+        const TIMELINE_ZOOM_MIN = 2, TIMELINE_ZOOM_MAX = 40;
+
+        function zoomTimeline(factor) {
+            timelineZoomPxPerMin = Math.max(TIMELINE_ZOOM_MIN, Math.min(TIMELINE_ZOOM_MAX, Math.round(timelineZoomPxPerMin * factor)));
+            const wrap = document.getElementById('player-timeline-wrap');
+            if (wrap && currentRoomId && currentFocusPlayer) {
+                wrap.outerHTML = renderPlayerTimelineHTML(currentRoomId, currentFocusPlayer);
+            }
+        }
+
+        function renderPlayerTimelineHTML(roomId, playerName) {
+            const { events, sessionStart, sessionEnd } = buildPlayerTimeline(roomId, playerName);
+            currentTimelineEvents = events;
+
+            if (events.length === 0 || !sessionStart) {
+                return `<div id="player-timeline-wrap" style="background:#fff; border:1px solid #eee; border-radius:12px; padding:16px; margin-bottom:16px; text-align:center; color:#94a3b8; font-size:0.9em;">📈 ยังไม่มีข้อมูลพอสร้างเส้นเวลา</div>`;
+            }
+
+            const enterCount = events.filter(e => e.type === 'enter').length;
+            const skipCount = events.filter(e => e.type === 'skip').length;
+
+            const PX_PER_MIN = timelineZoomPxPerMin;
+            const axisStart = new Date(sessionStart); axisStart.setMinutes(0, 0, 0);
+            const axisEnd = new Date(sessionEnd); axisEnd.setMinutes(axisEnd.getMinutes() + 15);
+            const totalMin = Math.max(30, (axisEnd - axisStart) / 60000);
+            const trackWidth = Math.max(500, totalMin * PX_PER_MIN);
+            const xOf = (d) => ((d - axisStart) / 60000) * PX_PER_MIN;
+
+            const hourTicks = [];
+            let hourCursor = new Date(axisStart);
+            while (hourCursor <= axisEnd) {
+                hourTicks.push(new Date(hourCursor));
+                hourCursor = new Date(hourCursor.getTime() + 60 * 60000);
+            }
+
+            const colors = { enter: '#27ae60', finish: '#2c3e50', skip: '#f39c12' };
+            const dotsHTML = events.map((e, idx) => `
+                <div onclick="showTimelineDetail(${idx})"
+                     title="${sanitizeHTML(e.label)}"
+                     style="position:absolute; left:${xOf(e.time)}px; top:50%; transform:translate(-50%,-50%);
+                            width:${e.type === 'finish' ? 10 : 14}px; height:${e.type === 'finish' ? 10 : 14}px;
+                            border-radius:50%; background:${colors[e.type]}; border:2px solid white;
+                            box-shadow:0 1px 4px rgba(0,0,0,0.3); cursor:pointer; z-index:2;">
+                </div>
+            `).join('');
+
+            const hourTicksHTML = hourTicks.map(h => `
+                <div style="position:absolute; left:${xOf(h)}px; top:0; bottom:0; width:1px; background:rgba(0,0,0,0.06);"></div>
+                <div style="position:absolute; left:${xOf(h)}px; bottom:-20px; font-size:0.72em; color:#94a3b8; font-family:monospace; white-space:nowrap;">
+                    ${h.getHours().toString().padStart(2,'0')}:00
+                </div>
+            `).join('');
+
+            const zoomButtonStyle = 'width:28px; height:28px; border-radius:8px; border:1px solid #ddd; background:#fff; color:#2c3e50; font-weight:bold; cursor:pointer; font-size:1em; line-height:1; padding:0;';
+
+            return `
+            <div id="player-timeline-wrap" style="background:#fff; border:1px solid #eee; border-radius:12px; padding:16px; margin-bottom:16px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px;">
+                    <div style="font-weight:bold; color:#2c3e50;">📈 เส้นเวลาของ ${sanitizeHTML(playerName)}</div>
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                        <div style="font-size:0.82em; color:#7f8c8d;">
+                            <span style="color:${colors.enter}; font-weight:bold;">● เข้าคอร์ท ${enterCount}</span> &nbsp;
+                            <span style="color:${colors.skip}; font-weight:bold;">● ถูกข้าม ${skipCount}</span> &nbsp;
+                            <span style="color:${colors.finish}; font-weight:bold;">● จบเกม</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:4px;">
+                            <button onclick="zoomTimeline(0.6)" title="ย่อ (ดูภาพรวม)" style="${zoomButtonStyle}" ${timelineZoomPxPerMin <= TIMELINE_ZOOM_MIN ? 'disabled' : ''}>－</button>
+                            <button onclick="zoomTimeline(1.6)" title="ขยาย (ดูละเอียด)" style="${zoomButtonStyle}" ${timelineZoomPxPerMin >= TIMELINE_ZOOM_MAX ? 'disabled' : ''}>＋</button>
+                        </div>
+                    </div>
+                </div>
+                <div style="overflow-x:auto; padding-bottom:24px;">
+                    <div style="position:relative; width:${trackWidth}px; height:36px; margin-top:10px;">
+                        <div style="position:absolute; left:0; right:0; top:50%; height:2px; background:#e2e8f0; transform:translateY(-50%);"></div>
+                        ${hourTicksHTML}
+                        ${dotsHTML}
+                    </div>
+                </div>
+                <div id="timeline-detail" style="margin-top:10px; padding:10px 12px; background:#f8fafc; border-radius:8px; font-size:0.85em; color:#2c3e50; min-height:20px;">
+                    👆 แตะจุดสีบนเส้นเวลาเพื่อดูรายละเอียด (สีเขียว=เข้าคอร์ท, สีส้ม=ถูกข้าม, สีเทาเข้ม=จบเกม)
+                </div>
+                <p style="font-size:0.75em; color:#bbb; margin:8px 0 0;">* เวลาคำนวณจากเวลาจบเกม−ระยะเวลาแข่ง อาจคลาดเคลื่อนได้ ±1 นาที และถ้าเคยกดพักระหว่างเกมโดยไม่ได้บันทึกเวลา อาจขึ้น "ถูกข้าม" ผิดได้</p>
+            </div>`;
+        }
+
+        function showTimelineDetail(idx) {
+            const e = currentTimelineEvents[idx];
+            const box = document.getElementById('timeline-detail');
+            if (!e || !box) return;
+            const timeStr = e.time.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+            const courtStr = e.court ? ` • คอร์ท ${e.court}` : '';
+            if (e.type === 'enter') {
+                box.innerHTML = `<strong style="color:#27ae60;">🟢 ${timeStr}${courtStr} — เข้าคอร์ท</strong><br>${sanitizeHTML(e.label)}`;
+            } else if (e.type === 'finish') {
+                box.innerHTML = `<strong style="color:#2c3e50;">⚫ ${timeStr}${courtStr} — จบเกม</strong><br>${sanitizeHTML(e.label)}${e.detail ? ` (${sanitizeHTML(e.detail)})` : ''}`;
+            } else {
+                box.innerHTML = `<strong style="color:#f39c12;">🟠 ${timeStr}${courtStr} — ถูกข้าม</strong><br>คนที่ได้ลงแทน: ${sanitizeHTML(e.detail)}`;
+            }
+        }
+
+        // ==========================================
+        // 🗑 ลบ Log ของห้องนี้ทั้งหมด (เช่น ห้องทดสอบ) — ต้องยืนยัน + รหัสผ่านแอดมิน
+        // นี่เป็นแค่ด่านกันมือลั่นในหน้าเว็บ ไม่ใช่ระบบความปลอดภัยจริง
+        // (ของจริงต้องตั้งที่ Firestore Security Rules)
+        // ==========================================
+        async function deleteRoomLog(roomId) {
+            const meta = roomMeta[roomId] || {};
+            const label = meta.suffix ? `${meta.dateStr} • ห้อง ${meta.suffix}` : meta.dateStr;
+            if (!confirm(`⚠️ จะลบข้อมูลห้อง "${label}" (การแข่งขันทั้งหมดของห้องนี้) ทิ้งถาวร ทำต่อไหม?`)) return;
+
+            const pwd = prompt('พิมพ์รหัสผ่านแอดมินเพื่อยืนยันการลบ:');
+            if (pwd === null) return;
+            if (pwd !== 'siberian') { alert('❌ รหัสผ่านผิด ยกเลิกการลบ'); return; }
+
+            try {
+                await db.collection('rooms').doc(roomId).delete();
+                delete groupedMatches[roomId];
+                delete roomMeta[roomId];
+                allMatches = allMatches.filter(m => m.roomId !== roomId);
+                currentFocusPlayer = null;
+                alert('🗑 ลบข้อมูลห้องนี้เรียบร้อยแล้ว');
+                renderHistoryTab();
+            } catch (err) {
+                console.error(err);
+                alert('❌ ลบไม่สำเร็จ เช็คเน็ตแล้วลองใหม่');
+            }
+        }
+
+        // ===============================================
+        // 🤝 แท็บที่ 2: วิเคราะห์คู่หู (กดเลือกชื่อคน)
+        // ===============================================
+        function renderPartnerTab() {
+            const container = document.getElementById('content-area');
+
+            const allNames = new Set(Object.keys(playerProfiles));
+            allMatches.forEach(m => {
+                m.winners.forEach(n => allNames.add(n));
+                m.losers.forEach(n => allNames.add(n));
+            });
+            const playerList = Array.from(allNames).sort();
+
+            let html = `
+            <div style="background:white; padding:20px; border-radius:12px; margin-bottom:20px; box-shadow:0 4px 6px rgba(0,0,0,0.05);">
+                <h3 style="margin-top:0; color:#2c3e50;">👇 จิ้มชื่อเพื่อดูสถิติ (Player Analytics)</h3>
+                <div style="display:flex; flex-wrap:wrap; gap:10px;">
+            `;
+
+            playerList.forEach(name => {
+                // ✅ FIX: name passed into onclick() is now URL-encoded, not the raw
+                // string. A raw name containing a quote (e.g. "O'Brien") used to
+                // break this button's onclick handler entirely — encoding avoids
+                // that, and analyzePlayer() decodes it back before using it.
+                const encName = encodeURIComponent(name);
+                html += `
+                <button class="btn" style="background:#f0f4f8; color:#2c3e50; border:1px solid #ccc; display:flex; align-items:center; gap:8px;" onclick="analyzePlayer('${encName}')">
+                    <img src="${getAvatar(name)}" class="mini-avatar" style="margin:0;"> ${sanitizeHTML(name)}
+                </button>`;
+            });
+
+            html += `</div></div><div id="player-analytics-result"></div>`;
+            container.innerHTML = html;
+        }
+
+        function analyzePlayer(encodedName) {
+            const playerName = decodeURIComponent(encodedName);
+            currentAnalyzedPlayer = playerName;
+            const stats = {};
+
+            allMatches.forEach(m => {
+                const isWinner = m.winners.includes(playerName);
+                const isLoser = m.losers.includes(playerName);
+
+                if (isWinner && m.winners.length === 2) {
+                    const partner = m.winners.find(n => n !== playerName);
+                    if(!stats[partner]) stats[partner] = { wins:0, total:0 };
+                    stats[partner].wins++; stats[partner].total++;
+                } else if (isLoser && m.losers.length === 2) {
+                    const partner = m.losers.find(n => n !== playerName);
+                    if(!stats[partner]) stats[partner] = { wins:0, total:0 };
+                    stats[partner].total++;
+                }
+            });
+
+            currentPlayerPartnerStats = Object.keys(stats).map(partner => ({
+                name: partner,
+                wins: stats[partner].wins,
+                total: stats[partner].total,
+                winRate: Math.round((stats[partner].wins / stats[partner].total) * 100)
+            }));
+
+            sortPlayerStats('total_desc');
+        }
+
+        function sortPlayerStats(sortType) {
+            if (sortType === 'total_desc') currentPlayerPartnerStats.sort((a,b) => b.total - a.total);
+            else if (sortType === 'wins_desc') currentPlayerPartnerStats.sort((a,b) => b.wins - a.wins);
+            else if (sortType === 'rate_desc') currentPlayerPartnerStats.sort((a,b) => b.winRate - a.winRate);
+
+            renderAnalyticsTable(sortType);
+        }
+
+        function renderAnalyticsTable(currentSort) {
+            const resultDiv = document.getElementById('player-analytics-result');
+
+            if(currentPlayerPartnerStats.length === 0) {
+                 resultDiv.innerHTML = `<div class="day-card" style="text-align:center; padding:40px;"><h3 style="color:#e74c3c;">"${sanitizeHTML(currentAnalyzedPlayer)}" ยังไม่เคยเล่นแบบคู่เลยว่ะ! (หรือประวัติหาย)</h3></div>`;
+                 return;
+            }
+
+            let html = `
+            <div class="day-card">
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #8e44ad; padding-bottom:15px; margin-bottom:10px; flex-wrap:wrap; gap:10px;">
+                    <div style="display:flex; align-items:center; gap:15px;">
+                        <img src="${getAvatar(currentAnalyzedPlayer)}" style="width:60px; height:60px; border-radius:50%; border:3px solid #8e44ad;">
+                        <div>
+                            <h2 style="margin:0; color:#8e44ad;">สถิติคู่หูของ: ${sanitizeHTML(currentAnalyzedPlayer)}</h2>
+                            <span style="font-size:0.9em; color:gray;">เคยจับคู่กับคนอื่นไป ${currentPlayerPartnerStats.length} คน</span>
+                        </div>
+                    </div>
+                    <select onchange="sortPlayerStats(this.value)" style="padding:10px; border-radius:8px; font-weight:bold; font-size:1em; border:2px solid #ccc; cursor:pointer;">
+                        <option value="total_desc" ${currentSort==='total_desc'?'selected':''}>🔽 จับคู่เล่นเยอะสุด</option>
+                        <option value="wins_desc" ${currentSort==='wins_desc'?'selected':''}>🔽 พากันชนะเยอะสุด</option>
+                        <option value="rate_desc" ${currentSort==='rate_desc'?'selected':''}>🔽 % Win Rate สูงสุด</option>
+                    </select>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table class="analytics-table">
+                        <tr>
+                            <th>พาร์ทเนอร์ (คู่กับ)</th>
+                            <th style="text-align:center;">จำนวนเกมที่เล่นด้วยกัน</th>
+                            <th style="text-align:center;">ชนะ</th>
+                            <th style="text-align:center;">% ชนะ (Win Rate)</th>
+                        </tr>
+            `;
+
+            currentPlayerPartnerStats.forEach((p, idx) => {
+                const isTopRate = currentSort === 'rate_desc' && idx === 0 && p.winRate >= 50;
+                html += `
+                <tr>
+                    <td style="display:flex; align-items:center; gap:10px;">
+                        <img src="${getAvatar(p.name)}" class="mini-avatar" style="margin:0;">
+                        <strong style="font-size:1.1em;">${sanitizeHTML(p.name)}</strong> ${isTopRate ? '👑' : ''}
+                    </td>
+                    <td style="text-align:center; font-size:1.1em; color:#2c3e50;">${p.total}</td>
+                    <td style="text-align:center; font-size:1.1em; color:#27ae60; font-weight:bold;">${p.wins}</td>
+                    <td style="text-align:center;">
+                        <span style="background:${p.winRate >= 60 ? '#2ecc71' : (p.winRate <= 40 ? '#e74c3c' : '#f1c40f')}; color:white; padding:5px 12px; border-radius:20px; font-weight:bold; font-size:0.9em;">
+                            ${p.winRate}%
+                        </span>
+                    </td>
+                </tr>
+                `;
+            });
+
+            html += `</table></div></div>`;
+            resultDiv.innerHTML = html;
+        }
+
+        // เริ่มต้นรันสคริปต์
+        fetchData();
+
+        // ==========================================
+        // 💰 ฟังก์ชันเซฟบิลสรุปยอดลง Firebase
+        // (ยังไม่ได้เรียกใช้งานที่ไหนในระบบตอนนี้ — เก็บไว้เผื่ออนาคต ตามที่ตกลงกันไว้)
+        // ==========================================
+        async function saveBillToFirebase(roomId, billData) {
+            if (!roomId || !billData) {
+                console.error("ข้อมูลไม่ครบว่ะ เซฟไม่ได้!");
+                alert("⚠️ ข้อมูลหายไปไหนไม่รู้ เช็คระบบก่อนเซฟดิ๊!");
+                return;
+            }
+
+            try {
+                await db.collection('bills').doc(roomId).set({
+                    courtFee: billData.courtFee,
+                    shuttlePrice: billData.shuttlePrice,
+                    shuttleUsed: billData.shuttleUsed,
+                    totalCost: billData.totalCost,
+                    khunthongTotal: billData.khunthongTotal,
+                    directTotal: billData.directTotal,
+                    playersBill: billData.playersBill,
+                    savedAt: Date.now()
+                });
+
+                alert("💾 บันทึกบิลลง Database โคตรสมบูรณ์! ก๊อปยอดไปตั้งในขุนทองได้เลย!");
+
+            } catch (error) {
+                console.error("❌ เซฟบิลพลาด: ", error);
+                alert("เซฟไม่ติด");
+            }
+        }
+    </script>
+</body>
+</html>
